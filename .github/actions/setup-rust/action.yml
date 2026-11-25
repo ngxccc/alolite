@@ -131,6 +131,18 @@ runs:
           fi
         done
 
+    - name: Keep pre-installed Rust stable up to date
+      if: steps.check-env.outputs.has_rust == 'true'
+      shell: bash
+      run: |
+        if command -v rustup >/dev/null 2>&1; then
+          rustup update stable --no-self-update
+          rustup default stable
+          if [ -n "${{ inputs.components }}" ]; then
+            rustup component add ${{ inputs.components }}
+          fi
+        fi
+
     - name: High-performance Rust Cache
       if: inputs.cache == 'true'
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
