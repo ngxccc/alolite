@@ -1,4 +1,5 @@
-import { CornerUpLeft, Forward, RotateCcw, Star, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { CornerUpLeft, Forward, RotateCcw, SmilePlus, Star, Trash2, Undo2 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import type { ChatMessage, Thread } from "@/shared/types/ipc.generated";
 import {
@@ -8,7 +9,12 @@ import {
 } from "@/shared/ui/context-menu";
 import { cn } from "cn";
 import { useChatStore, useUIStore } from "@/stores";
-import { REACTION_LIST } from "../constants/emojis";
+import {
+  CATEGORY_ICONS,
+  EMOJI_CATEGORIES,
+  PINNED_REACTIONS,
+  REACTION_LIST,
+} from "../constants/emojis";
 import { ReactionBadge } from "./message-reactions";
 
 interface MessageContextMenuProps {
@@ -23,22 +29,104 @@ export function MessageContextMenu({ msg, thread, onSelectReaction }: MessageCon
   const toggleLocalStar = useChatStore((s) => s.toggleLocalStar);
   const deleteMessageLocal = useChatStore((s) => s.deleteMessageLocal);
   const setStatusMessage = useUIStore((s) => s.setStatusMessage);
+  const [showAllEmojis, setShowAllEmojis] = useState(false);
+  const [category, setCategory] = useState<string>("Smileys");
+
+  const categoryEmojis = EMOJI_CATEGORIES[category] ?? [];
 
   return (
-    <ContextMenuContent>
-      <div className="flex items-center gap-1 px-1.5 py-1">
-        {REACTION_LIST.map((r) => (
+    <ContextMenuContent className={showAllEmojis ? "w-[300px]" : undefined}>
+      {!showAllEmojis ? (
+        <div className="flex items-center gap-1 px-1.5 py-1">
+          {REACTION_LIST.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              title={r.label}
+              onClick={() => onSelectReaction(r.emoji)}
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-transform hover:scale-120 hover:bg-accent"
+            >
+              <ReactionBadge raw={r.emoji} />
+            </button>
+          ))}
           <button
-            key={r.key}
             type="button"
-            title={r.label}
-            onClick={() => onSelectReaction(r.emoji)}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-transform hover:scale-120 hover:bg-accent"
+            title="Thêm biểu tượng cảm xúc"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowAllEmojis(true);
+            }}
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <ReactionBadge raw={r.emoji} />
+            <SmilePlus className="h-4 w-4" />
           </button>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div className="space-y-2 p-2">
+          <div className="flex items-center justify-between border-b border-border pb-1 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Ghim & Phổ biến</span>
+            <button
+              type="button"
+              title="Thu gọn"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowAllEmojis(false);
+              }}
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {PINNED_REACTIONS.map((em) => (
+              <button
+                key={`pin_${em}`}
+                type="button"
+                onClick={() => onSelectReaction(em)}
+                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-base transition-transform hover:scale-120 hover:bg-accent"
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+          <div className="no-scrollbar flex items-center gap-0.5 overflow-x-auto border-t border-border pt-1">
+            {Object.keys(EMOJI_CATEGORIES).map((catName) => (
+              <button
+                key={catName}
+                type="button"
+                title={catName}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCategory(catName);
+                }}
+                className={cn(
+                  "flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded text-sm transition-colors",
+                  category === catName
+                    ? "bg-accent font-bold text-accent-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {CATEGORY_ICONS[catName] ?? "😀"}
+              </button>
+            ))}
+          </div>
+          <div className="grid max-h-44 grid-cols-8 gap-1 overflow-y-auto pr-1">
+            {categoryEmojis.map((em, idx) => (
+              <button
+                key={`${category}_${em}_${idx}`}
+                type="button"
+                onClick={() => onSelectReaction(em)}
+                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-base transition-transform hover:scale-120 hover:bg-accent"
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => setReplyingTo(msg)}>
         <CornerUpLeft className="h-4 w-4" /> Trả lời

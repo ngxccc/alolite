@@ -10,22 +10,50 @@ export interface ChatMessageListProps extends React.HTMLAttributes<HTMLDivElemen
 
 export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListProps>(
   ({ className, children, smooth = false, showScrollToBottom = true, ...props }, ref) => {
-    const localRef = React.useRef<HTMLDivElement | null>(null);
+    const scrollElRef = React.useRef<HTMLDivElement | null>(null);
+    const contentRef = React.useRef<HTMLDivElement | null>(null);
+    const isAtBottomRef = React.useRef(true);
     const [isAtBottom, setIsAtBottom] = React.useState(true);
+
+    const setMergedRef = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        scrollElRef.current = node;
+        if (typeof ref === "function") {
+          ref(node);
+        } else if (ref) {
+          ref.current = node;
+        }
+      },
+      [ref],
+    );
 
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
       props.onScroll?.(e);
       const target = e.currentTarget;
-      const atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 40;
+      const atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 48;
+      isAtBottomRef.current = atBottom;
       setIsAtBottom(atBottom);
     };
 
+    React.useEffect(() => {
+      const content = contentRef.current;
+      const scroller = scrollElRef.current;
+      if (!content || !scroller || typeof ResizeObserver === "undefined") return;
+
+      const observer = new ResizeObserver(() => {
+        if (isAtBottomRef.current) {
+          scroller.scrollTop = scroller.scrollHeight;
+        }
+      });
+      observer.observe(content);
+      return () => observer.disconnect();
+    }, []);
+
     const scrollToBottom = () => {
-      const container =
-        ref && typeof ref === "object" && "current" in ref
-          ? (ref as React.RefObject<HTMLDivElement | null>).current
-          : localRef.current;
+      const container = scrollElRef.current;
       if (container) {
+        isAtBottomRef.current = true;
+        setIsAtBottom(true);
         container.scrollTo({
           top: container.scrollHeight,
           behavior: smooth ? "smooth" : "auto",
@@ -36,25 +64,30 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
     return (
       <div className="relative flex min-h-0 w-full flex-1 flex-col">
         <div
-          ref={ref ?? localRef}
+          ref={setMergedRef}
           onScroll={handleScroll}
-          className={cn("flex flex-1 flex-col gap-0.5 overflow-y-auto px-4 py-3", className)}
+          className={cn("flex flex-1 flex-col overflow-y-auto px-4 py-3", className)}
           {...props}
         >
-          {children}
+          <div ref={contentRef} className="mt-auto flex flex-col gap-0.5">
+            {children}
+          </div>
         </div>
 
-        {showScrollToBottom && !isAtBottom && (
+        {showScrollToBottom ? (
           <Button
             onClick={scrollToBottom}
             size="icon"
             variant="outline"
-            className="absolute right-6 bottom-3 z-30 h-8 w-8 rounded-full border-border bg-popover/90 text-foreground shadow-md backdrop-blur-xs hover:bg-popover"
+            className={cn(
+              "absolute right-6 bottom-3 z-30 h-8 w-8 rounded-full border-border bg-popover/90 text-foreground shadow-md backdrop-blur-xs transition-all duration-150 hover:bg-popover",
+              isAtBottom ? "pointer-events-none translate-y-1 opacity-0" : "opacity-100",
+            )}
             aria-label="Cuộn xuống cuối"
           >
             <ArrowDown className="h-4 w-4" />
           </Button>
-        )}
+        ) : null}
       </div>
     );
   },

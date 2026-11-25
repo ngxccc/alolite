@@ -19,9 +19,15 @@ export function useChatScroll({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+  const prevThreadIdRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
-    if (scrollRef.current && !quoteHighlightId) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!scrollRef.current) return;
+    if (prevThreadIdRef.current !== thread?.id) {
+      prevThreadIdRef.current = thread?.id;
+      if (!quoteHighlightId) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
     }
   }, [thread?.id, visibleMessagesCount, quoteHighlightId]);
 
