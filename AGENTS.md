@@ -34,7 +34,7 @@ Operating guide for AI agents and humans working in this repository.
 | `crates/alolite-cli/`     | `alolite` binary (`--mcp`, `--api-only`, `--qr`, `--phone`, desktop launcher)                      |
 | `crates/alolite-desktop/` | Tauri v2 native desktop host (`alolite-desktop`) over `alolite-core` embedding `apps/desktop/dist` |
 | `apps/desktop/`           | Pure feature-based TypeScript + React frontend (`src/{app,shared,features}/`)                      |
-| `docs/`                   | Engineering standards, ADRs (`docs/adr/`), `book.toml`, `DESIGN.md`, `ROADMAP.md`, `LEGAL.md`      |
+| `docs/`                   | Engineering standards, ADRs (`docs/adr/`), `book.toml`, `ROADMAP.md`, `LEGAL.md`                   |
 | `packaging/`              | Linux `.deb`, `.rpm`, `.AppImage`, `.tar.gz` packaging scripts                                     |
 
 ### Protocol Submodule Map (`crates/alolite-core/src/protocol/`)

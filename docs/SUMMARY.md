@@ -1,7 +1,5 @@
 # Summary
 
-[System Design](DESIGN.md)
-
 - [Roadmap](ROADMAP.md)
 - [Legal & Compliance](LEGAL.md)
 
@@ -11,6 +9,7 @@
 - [ADR 0002: Protocol Module Boundaries](adr/0002-protocol-module-boundaries.md)
 - [ADR 0003: Tauri v2 UI Architecture](adr/0003-tauri-feature-ui-architecture.md)
 - [ADR 0004: Workspace & Desktop Separation](adr/0004-cargo-workspace-and-desktop-separation.md)
+- [ADR 0006: Frontend Domain Stores & Selector Discipline](adr/0006-frontend-domain-stores-and-selector-discipline.md)
 
 # Engineering Standards
 
