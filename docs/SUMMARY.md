@@ -10,6 +10,7 @@
 - [ADR 0003: Tauri v2 UI Architecture](adr/0003-tauri-feature-ui-architecture.md)
 - [ADR 0004: Workspace & Desktop Separation](adr/0004-cargo-workspace-and-desktop-separation.md)
 - [ADR 0006: Frontend Domain Stores & Selector Discipline](adr/0006-frontend-domain-stores-and-selector-discipline.md)
+- [ADR 0007: shadcn/ui Base UI & Zinc Design System](adr/0007-shadcn-base-ui-and-zinc-design-system.md)
 
 # Engineering Standards
 
