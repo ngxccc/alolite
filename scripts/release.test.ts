@@ -2,7 +2,17 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prependChangelog, resolveTarget, suggestBump } from "./release";
+import {
+  buildOxfmtArgs,
+  findBlockingReleasePr,
+  isBreaking,
+  isFeature,
+  isMajorZero,
+  parseInteractiveChoice,
+  prependChangelog,
+  resolveTarget,
+  suggestBump,
+} from "./release";
 
 describe("resolveTarget", () => {
   it("takes an explicit version as-is", () => {
@@ -53,6 +63,55 @@ describe("suggestBump", () => {
 
   it("reads the breaking marker after a scope", () => {
     expect(suggestBump([pr(3, "chore(config)!: rename env")])?.level).toBe("major");
+  });
+
+  it("caps pre-1.0 breaking changes at minor", () => {
+    expect(isMajorZero("0.1.2")).toBe(true);
+    expect(isMajorZero("1.0.0")).toBe(false);
+    const result = suggestBump([pr(10, "feat(core)!: replace session")], "0.1.2");
+    expect(result?.level).toBe("minor");
+    expect(result?.reason).toContain("pre-1.0 capped to minor");
+  });
+
+  it("detects breaking changes and features from labels", () => {
+    expect(isBreaking(pr(4, "refactor: api", ["breaking-change"]))).toBe(true);
+    expect(isFeature(pr(5, "New view", ["type:feat"]))).toBe(true);
+  });
+});
+
+describe("parseInteractiveChoice", () => {
+  it("parses confirmation, quick level overrides, and explicit semver", () => {
+    expect(parseInteractiveChoice("", "0.2.0", "0.1.2")).toBeNull();
+    expect(parseInteractiveChoice("n", "0.2.0", "0.1.2")).toBeNull();
+    expect(parseInteractiveChoice("y", "0.2.0", "0.1.2")).toBe("0.2.0");
+    expect(parseInteractiveChoice("p", "0.2.0", "0.1.2")).toBe("0.1.3");
+    expect(parseInteractiveChoice("m", "0.1.3", "0.1.2")).toBe("0.2.0");
+    expect(parseInteractiveChoice("M", "0.2.0", "0.1.2")).toBe("1.0.0");
+    expect(parseInteractiveChoice("0.3.0", "0.2.0", "0.1.2")).toBe("0.3.0");
+    expect(() => parseInteractiveChoice("invalid", "0.2.0", "0.1.2")).toThrow();
+  });
+});
+
+describe("findBlockingReleasePr", () => {
+  it("detects open release pull requests before branching", () => {
+    expect(
+      findBlockingReleasePr([{ number: 10, title: "fix(ui): polish", headRefName: "fix/ui" }]),
+    ).toBeUndefined();
+    expect(
+      findBlockingReleasePr([
+        { number: 11, title: "chore(release): v0.2.0", headRefName: "chore/release-v0.2.0" },
+      ])?.number,
+    ).toBe(11);
+  });
+});
+
+describe("buildOxfmtArgs", () => {
+  it("includes --no-error-on-unmatched-pattern for ignored CHANGELOG targets", () => {
+    expect(buildOxfmtArgs("CHANGELOG.md", true)).toContain("--no-error-on-unmatched-pattern");
+    expect(buildOxfmtArgs("CHANGELOG.md", false)).toEqual([
+      "--no-error-on-unmatched-pattern",
+      "CHANGELOG.md",
+    ]);
   });
 });
 
