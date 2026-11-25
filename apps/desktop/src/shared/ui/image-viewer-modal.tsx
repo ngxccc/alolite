@@ -33,7 +33,7 @@ export function ImageViewerModal({
   return (
     <Dialog open={Boolean(viewer)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        hideClose
+        showCloseButton={false}
         className="h-[86vh] max-h-[86vh] w-[88vw] max-w-[88vw] bg-background"
       >
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-sidebar px-4">

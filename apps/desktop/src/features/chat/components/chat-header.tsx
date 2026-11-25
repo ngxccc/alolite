@@ -1,8 +1,8 @@
 import { PanelRight, Star, Tag, UserPlus, Users } from "lucide-react";
 import type { Thread } from "@/shared/types/ipc.generated";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Button } from "@/shared/ui/button";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { threadMemberCount } from "@/features/threads/utils/threads";
 import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import { InChatSearch } from "./in-chat-search";
@@ -28,7 +28,7 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
   return (
     <header className="flex h-[68px] shrink-0 items-center justify-between border-b border-border bg-sidebar px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <Avatar
+        <UserAvatar
           id={thread.id}
           name={thread.name}
           avatarUrl={thread.avatar}

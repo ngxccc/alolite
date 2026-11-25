@@ -1,4 +1,4 @@
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { NotifThumbnail, SectionHeading, SettingCard, SwitchRow } from "../primitives";
 import type { SettingsTabProps } from "../types";
 

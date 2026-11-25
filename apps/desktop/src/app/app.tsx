@@ -125,7 +125,7 @@ export function App() {
   }
 
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider delay={250}>
       {!loggedIn ? (
         <LoginView />
       ) : (

@@ -1,7 +1,7 @@
 import { useState, type SyntheticEvent } from "react";
 import { MessageSquare, Search, UserPlus } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 
@@ -84,7 +84,7 @@ export function PhoneLookupModal() {
           {p ? (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-background p-3">
               <div className="flex items-center gap-3">
-                <Avatar
+                <UserAvatar
                   id={p.user_id}
                   name={p.display_name || p.zalo_name}
                   avatarUrl={p.avatar}

@@ -15,7 +15,7 @@ import {
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { AppSettings } from "@/shared/types/ipc.generated";
 import { Dialog, DialogContent, DialogTitle } from "@/shared/ui/dialog";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { useAuthStore, useChatStore, useUIStore, type SettingsTab } from "@/stores";
 import {
   AccountTab,
@@ -88,7 +88,7 @@ export function SettingsModal() {
       {/* 653x652 dialog, radius-lg (8px), no default padding */}
       <DialogContent
         className="flex h-[652px] w-[653px] max-w-[653px] flex-row overflow-hidden rounded-lg p-0"
-        hideClose
+        showCloseButton={false}
       >
         {/* ── Left nav 186px ── */}
         <nav className="flex w-[186px] shrink-0 flex-col gap-0.5 overflow-y-auto bg-card px-2 py-4">

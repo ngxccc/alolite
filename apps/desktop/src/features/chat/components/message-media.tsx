@@ -3,7 +3,7 @@ import { Download, ExternalLink, FileText, Phone, Play, Video } from "lucide-rea
 import { ipc } from "@/shared/api/ipc";
 import type { ChatMessage } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { jxlToJpgUrl } from "@/shared/utils/text";
 import {
   type CallCardMeta,

@@ -1,4 +1,5 @@
 import { ChevronRight } from "lucide-react";
+import { Label } from "@/shared/ui/label";
 import {
   ChevronRow,
   RowDivider,
@@ -63,7 +64,7 @@ export function MessagesTab({ settings, updateSettings }: SettingsTabProps) {
           ].map((opt, i) => (
             <div key={opt.value}>
               {i > 0 && <RowDivider />}
-              <label className="flex min-h-[44px] cursor-pointer items-center gap-3 px-4 py-2">
+              <Label className="flex min-h-[44px] cursor-pointer items-center gap-3 px-4 py-2 font-normal">
                 <input
                   type="radio"
                   name="excel_paste_mode"
@@ -73,7 +74,7 @@ export function MessagesTab({ settings, updateSettings }: SettingsTabProps) {
                   className="h-4 w-4 accent-primary"
                 />
                 <span className="text-sm text-foreground">{opt.label}</span>
-              </label>
+              </Label>
             </div>
           ))}
         </div>

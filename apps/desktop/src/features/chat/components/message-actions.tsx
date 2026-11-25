@@ -3,7 +3,7 @@ import { ipc } from "@/shared/api/ipc";
 import type { ChatMessage, Thread } from "@/shared/types/ipc.generated";
 import { Popover, PopoverTrigger } from "@/shared/ui/popover";
 import { ChatBubbleAction, ChatBubbleActionWrapper } from "@/shared/ui/chat";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { useChatStore, useUIStore } from "@/stores";
 import { ReactionPickerContent } from "./message-reactions";
 
@@ -42,9 +42,11 @@ export function MessageActions({
       />
 
       <Popover open={isPickerOpen} onOpenChange={(open) => setReactPickerFor(open ? msgKey : null)}>
-        <PopoverTrigger asChild>
-          <ChatBubbleAction icon={<SmilePlus className="h-3.5 w-3.5" />} title="Thả cảm xúc" />
-        </PopoverTrigger>
+        <PopoverTrigger
+          render={
+            <ChatBubbleAction icon={<SmilePlus className="h-3.5 w-3.5" />} title="Thả cảm xúc" />
+          }
+        />
         <ReactionPickerContent onSelectReaction={onSelectReaction} />
       </Popover>
 

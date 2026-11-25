@@ -5,7 +5,7 @@ import type { AutoReplyRule } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Switch } from "@/shared/ui/switch";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { RowDivider, SectionHeading, SettingCard, SwitchRow } from "../primitives";
 import type { SettingsTabProps } from "../types";
 
@@ -75,9 +75,9 @@ export function UtilitiesTab({ settings, updateSettings }: SettingsTabProps) {
                 <div className="text-xs text-muted-foreground">{item.desc}</div>
               </div>
               <Switch
+                size="lg"
                 checked={settings[item.key]}
                 onCheckedChange={(v) => updateSettings({ [item.key]: v })}
-                className="h-[22px] w-10 data-[state=checked]:bg-primary data-[state=unchecked]:bg-[#3c4149] [&>span]:h-[18px] [&>span]:w-[18px] [&>span]:data-[state=checked]:translate-x-[18px]"
               />
             </div>
           </div>

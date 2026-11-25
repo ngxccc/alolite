@@ -23,11 +23,12 @@ import {
   X,
 } from "lucide-react";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
+import { Textarea } from "@/shared/ui/textarea";
 import type { StickerItem, Thread } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { extractFirstUrl } from "@/shared/utils/text";
 import { stickerThumbnailUrl } from "@/features/chat/utils/messages";
 import { useChatStore, useMediaCacheStore } from "@/stores";
@@ -316,17 +317,19 @@ export function Composer({ thread }: ComposerProps) {
       {/* ── Toolbar row: 24px icons at 40px pitch ── */}
       <div className="flex items-center text-muted-foreground">
         <Popover open={stickerOpen} onOpenChange={setStickerOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5",
-                stickerOpen ? "text-primary" : "text-muted-foreground",
-              )}
-              title="Gửi nhãn dán"
-            >
-              <Smile className="h-6 w-6" strokeWidth={1.65} />
-            </button>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                className={cn(
+                  "flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5",
+                  stickerOpen ? "text-primary" : "text-muted-foreground",
+                )}
+                title="Gửi nhãn dán"
+              />
+            }
+          >
+            <Smile className="h-6 w-6" strokeWidth={1.65} />
           </PopoverTrigger>
           <PopoverContent
             side="top"
@@ -506,14 +509,14 @@ export function Composer({ thread }: ComposerProps) {
 
       {/* ── Input row ── */}
       <div className="flex items-center gap-2 pt-0.5">
-        <textarea
+        <Textarea
           rows={1}
           value={text}
           onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={(e) => void handlePaste(e)}
           placeholder={`@, Nhập tin nhắn tới ${thread.name || thread.id}`}
-          className="max-h-28 min-h-[38px] flex-1 resize-none bg-transparent px-2 py-1.5 text-base text-foreground select-text placeholder:text-muted-foreground/60 focus:outline-none"
+          className="max-h-28 min-h-[38px] flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-base text-foreground shadow-none select-text placeholder:text-muted-foreground/60 focus-visible:ring-0"
         />
         <div className="flex shrink-0 items-center gap-1 pr-1">
           <button

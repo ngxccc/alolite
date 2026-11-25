@@ -1,9 +1,7 @@
 import { useState } from "react";
-import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import {
   Briefcase,
   Bug,
-  ChevronRight,
   CircleHelp,
   Cloud,
   Database,
@@ -23,10 +21,20 @@ import {
   Zap,
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { cn } from "@/shared/utils/cn";
+import { UserAvatar } from "@/shared/ui/user-avatar";
+import { cn } from "cn";
 import { useAuthStore, useChatStore, useMediaCacheStore, useUIStore } from "@/stores";
 import type { AppSettings } from "@/shared/types/ipc.generated";
 import { threadUnreadCount } from "@/features/threads/utils/threads";
@@ -50,43 +58,34 @@ function RailBtn({
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={label}
-          className={cn(
-            "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none",
-            active
-              ? isDark
-                ? "bg-white/[0.15] text-white"
-                : "bg-black/[0.25] text-white"
-              : "text-white/70 hover:bg-white/[0.1] hover:text-white",
-          )}
-        >
-          {children}
-          {badge != null && badge > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-[3px] text-xs leading-none font-bold text-white">
-              {badge > 99 ? "99+" : badge}
-            </span>
-          )}
-        </button>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            className={cn(
+              "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none",
+              active
+                ? isDark
+                  ? "bg-white/[0.15] text-white"
+                  : "bg-white/[0.18] text-white"
+                : "text-white/70 hover:bg-white/[0.1] hover:text-white",
+            )}
+          />
+        }
+      >
+        {children}
+        {badge != null && badge > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-[3px] text-xs leading-none font-bold text-white tabular-nums">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
       </TooltipTrigger>
       <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   );
 }
-
-// ─── Shared Radix DropdownMenu styling ───────────────────────────────────────
-
-const dmContentCls =
-  "z-50 min-w-[196px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl";
-
-const dmItemCls =
-  "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 py-2 text-sm text-popover-foreground outline-none transition-colors hover:bg-white/[0.05] focus:bg-white/[0.05] data-[disabled]:pointer-events-none data-[disabled]:opacity-40";
-
-const dmSubContentCls =
-  "z-50 min-w-[176px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl";
 
 // ─── Settings popup menu ──────────────────────────────────────────────────────
 
@@ -110,155 +109,112 @@ function SettingsMenu({ isDark }: { isDark: boolean }) {
   };
 
   return (
-    <DropdownMenuPrimitive.Root open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuPrimitive.Trigger asChild>
-            <button
-              type="button"
-              aria-label="Cài đặt"
-              className={cn(
-                "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none focus-visible:outline-none",
-                open
-                  ? "bg-white/[0.15] text-white"
-                  : "text-white/70 hover:bg-white/[0.1] hover:text-white",
-              )}
-            >
-              <Settings className="h-6 w-6" />
-            </button>
-          </DropdownMenuPrimitive.Trigger>
+        <TooltipTrigger
+          render={
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Cài đặt"
+                  className={cn(
+                    "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none focus-visible:outline-none",
+                    open
+                      ? "bg-white/[0.15] text-white"
+                      : "text-white/70 hover:bg-white/[0.1] hover:text-white",
+                  )}
+                />
+              }
+            />
+          }
+        >
+          <Settings className="h-6 w-6" />
         </TooltipTrigger>
         <TooltipContent side="right">Cài đặt</TooltipContent>
       </Tooltip>
-      <DropdownMenuPrimitive.Portal>
-        <DropdownMenuPrimitive.Content
-          side="right"
-          align="end"
-          sideOffset={8}
-          className={dmContentCls}
-        >
-          {/* Account information */}
-          <DropdownMenuPrimitive.Item
-            className={dmItemCls}
-            onSelect={() => setSettingsOpen(true, "account")}
-          >
-            <User className="h-4 w-4 shrink-0 opacity-70" />
-            Thông tin tài khoản
-          </DropdownMenuPrimitive.Item>
+      <DropdownMenuContent side="right" align="end" sideOffset={8} className="min-w-[196px]">
+        {/* Account information */}
+        <DropdownMenuItem onClick={() => setSettingsOpen(true, "account")}>
+          <User className="h-4 w-4 shrink-0 opacity-70" />
+          Thông tin tài khoản
+        </DropdownMenuItem>
 
-          {/* General settings */}
-          <DropdownMenuPrimitive.Item
-            className={dmItemCls}
-            onSelect={() => setSettingsOpen(true, "general")}
-          >
-            <Settings className="h-4 w-4 shrink-0 opacity-70" />
-            Cài đặt
-          </DropdownMenuPrimitive.Item>
-          <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+        {/* General settings */}
+        <DropdownMenuItem onClick={() => setSettingsOpen(true, "general")}>
+          <Settings className="h-4 w-4 shrink-0 opacity-70" />
+          Cài đặt
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
 
-          {/* Data sub-menu */}
-          <DropdownMenuPrimitive.Sub>
-            <DropdownMenuPrimitive.SubTrigger className={cn(dmItemCls, "justify-between")}>
-              <span className="flex items-center gap-2.5">
-                <Database className="h-4 w-4 shrink-0 opacity-70" />
-                Dữ liệu
-              </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-50" />
-            </DropdownMenuPrimitive.SubTrigger>
-            <DropdownMenuPrimitive.Portal>
-              <DropdownMenuPrimitive.SubContent sideOffset={4} className={dmSubContentCls}>
-                <DropdownMenuPrimitive.Item
-                  className={dmItemCls}
-                  onSelect={() => setIsSyncing(true)}
-                >
-                  <Cloud className="h-4 w-4 shrink-0 opacity-60" />
-                  Đồng bộ zCloud
-                </DropdownMenuPrimitive.Item>
-                <DropdownMenuPrimitive.Item
-                  className={dmItemCls}
-                  onSelect={() => setPhoneSyncOpen(true)}
-                >
-                  <Smartphone className="h-4 w-4 shrink-0 opacity-60" />
-                  Đồng bộ tin nhắn từ điện thoại
-                </DropdownMenuPrimitive.Item>
-              </DropdownMenuPrimitive.SubContent>
-            </DropdownMenuPrimitive.Portal>
-          </DropdownMenuPrimitive.Sub>
+        {/* Data sub-menu */}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Database className="h-4 w-4 shrink-0 opacity-70" />
+            Dữ liệu
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent sideOffset={4}>
+            <DropdownMenuItem onClick={() => setIsSyncing(true)}>
+              <Cloud className="h-4 w-4 shrink-0 opacity-60" />
+              Đồng bộ zCloud
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setPhoneSyncOpen(true)}>
+              <Smartphone className="h-4 w-4 shrink-0 opacity-60" />
+              Đồng bộ tin nhắn từ điện thoại
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
 
-          {/* Language sub-menu */}
-          <DropdownMenuPrimitive.Sub>
-            <DropdownMenuPrimitive.SubTrigger className={cn(dmItemCls, "justify-between")}>
-              <span className="flex items-center gap-2.5">
-                <Globe className="h-4 w-4 shrink-0 opacity-70" />
-                Ngôn ngữ
-              </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-50" />
-            </DropdownMenuPrimitive.SubTrigger>
-            <DropdownMenuPrimitive.Portal>
-              <DropdownMenuPrimitive.SubContent sideOffset={4} className={dmSubContentCls}>
-                <DropdownMenuPrimitive.Item className={dmItemCls} disabled>
-                  Tiếng Việt (mặc định)
-                </DropdownMenuPrimitive.Item>
-              </DropdownMenuPrimitive.SubContent>
-            </DropdownMenuPrimitive.Portal>
-          </DropdownMenuPrimitive.Sub>
+        {/* Language sub-menu */}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Globe className="h-4 w-4 shrink-0 opacity-70" />
+            Ngôn ngữ
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent sideOffset={4}>
+            <DropdownMenuItem disabled>Tiếng Việt (mặc định)</DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
 
-          {/* Help sub-menu */}
-          <DropdownMenuPrimitive.Sub>
-            <DropdownMenuPrimitive.SubTrigger className={cn(dmItemCls, "justify-between")}>
-              <span className="flex items-center gap-2.5">
-                <CircleHelp className="h-4 w-4 shrink-0 opacity-70" />
-                Hỗ trợ
-              </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-50" />
-            </DropdownMenuPrimitive.SubTrigger>
-            <DropdownMenuPrimitive.Portal>
-              <DropdownMenuPrimitive.SubContent sideOffset={4} className={dmSubContentCls}>
-                <DropdownMenuPrimitive.Item className={dmItemCls} disabled>
-                  Trung tâm hỗ trợ
-                </DropdownMenuPrimitive.Item>
-              </DropdownMenuPrimitive.SubContent>
-            </DropdownMenuPrimitive.Portal>
-          </DropdownMenuPrimitive.Sub>
-          <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+        {/* Help sub-menu */}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <CircleHelp className="h-4 w-4 shrink-0 opacity-70" />
+            Hỗ trợ
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent sideOffset={4}>
+            <DropdownMenuItem disabled>Trung tâm hỗ trợ</DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
 
-          {/* Theme toggle */}
-          <DropdownMenuPrimitive.Item className={dmItemCls} onSelect={toggleTheme}>
-            {isDark ? (
-              <Sun className="h-4 w-4 shrink-0 opacity-60" />
-            ) : (
-              <Moon className="h-4 w-4 shrink-0 opacity-60" />
-            )}
-            {isDark ? "Giao diện sáng" : "Giao diện tối"}
-          </DropdownMenuPrimitive.Item>
-
-          {/* Dev tools – only in devMode */}
-          {devMode && (
-            <DropdownMenuPrimitive.Item
-              className={dmItemCls}
-              onSelect={() => setDevToolsOpen(true)}
-            >
-              <Bug className="h-4 w-4 shrink-0 opacity-60" />
-              Công cụ nhà phát triển
-            </DropdownMenuPrimitive.Item>
+        {/* Theme toggle */}
+        <DropdownMenuItem onClick={toggleTheme}>
+          {isDark ? (
+            <Sun className="h-4 w-4 shrink-0 opacity-60" />
+          ) : (
+            <Moon className="h-4 w-4 shrink-0 opacity-60" />
           )}
+          {isDark ? "Giao diện sáng" : "Giao diện tối"}
+        </DropdownMenuItem>
 
-          <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+        {/* Dev tools – only in devMode */}
+        {devMode && (
+          <DropdownMenuItem onClick={() => setDevToolsOpen(true)}>
+            <Bug className="h-4 w-4 shrink-0 opacity-60" />
+            Công cụ nhà phát triển
+          </DropdownMenuItem>
+        )}
 
-          {/* Logout */}
-          <DropdownMenuPrimitive.Item
-            className={cn(
-              dmItemCls,
-              "text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive",
-            )}
-            onSelect={() => void ipc.logout()}
-          >
-            <LogOut className="h-4 w-4 shrink-0 opacity-80" />
-            Đăng xuất
-          </DropdownMenuPrimitive.Item>
-        </DropdownMenuPrimitive.Content>
-      </DropdownMenuPrimitive.Portal>
-    </DropdownMenuPrimitive.Root>
+        <DropdownMenuSeparator />
+
+        {/* Logout */}
+        <DropdownMenuItem variant="destructive" onClick={() => void ipc.logout()}>
+          <LogOut className="h-4 w-4 shrink-0 opacity-80" />
+          Đăng xuất
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -360,21 +316,25 @@ function ToolsPopover() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label="Công cụ zBusiness"
-              className={cn(
-                "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none",
-                open
-                  ? "bg-white/[0.15] text-white"
-                  : "text-white/70 hover:bg-white/[0.1] hover:text-white",
-              )}
-            >
-              <Briefcase className="h-6 w-6" />
-            </button>
-          </PopoverTrigger>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Công cụ zBusiness"
+                  className={cn(
+                    "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none",
+                    open
+                      ? "bg-white/[0.15] text-white"
+                      : "text-white/70 hover:bg-white/[0.1] hover:text-white",
+                  )}
+                />
+              }
+            />
+          }
+        >
+          <Briefcase className="h-6 w-6" />
         </TooltipTrigger>
         <TooltipContent side="right">Công cụ zBusiness</TooltipContent>
       </Tooltip>
@@ -434,22 +394,24 @@ export function NavRail() {
       <div className="flex flex-col items-center gap-1">
         {/* User avatar – opens account settings */}
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true, "account")}
-              className="relative mb-2 cursor-pointer rounded-full ring-2 ring-white/25 transition hover:ring-white/50 focus-visible:outline-none"
-            >
-              <Avatar
-                id={uin || "self"}
-                name={displayName || "Me"}
-                avatarUrl={avatar}
-                size={40}
-                mediaCache={mediaCache}
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true, "account")}
+                className="relative mb-2 cursor-pointer rounded-full ring-2 ring-white/25 transition hover:ring-white/50 focus-visible:outline-none"
               />
-              {/* Online status dot */}
-              <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-rail bg-online" />
-            </button>
+            }
+          >
+            <UserAvatar
+              id={uin || "self"}
+              name={displayName || "Me"}
+              avatarUrl={avatar}
+              size={40}
+              mediaCache={mediaCache}
+            />
+            {/* Online status dot */}
+            <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-rail bg-online" />
           </TooltipTrigger>
           <TooltipContent side="right">{displayName || "Tài khoản"}</TooltipContent>
         </Tooltip>

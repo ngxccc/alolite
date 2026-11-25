@@ -16,9 +16,9 @@ import {
   UserX,
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Button } from "@/shared/ui/button";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { jxlToJpgUrl } from "@/shared/utils/text";
 import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import { isPhotoMessage } from "@/features/chat/utils/messages";
@@ -230,12 +230,11 @@ export function InfoDrawer() {
 
       {/* Avatar + Name row */}
       <div className="flex flex-col items-center gap-1 px-4 pt-5 pb-4 text-center">
-        <Avatar
+        <UserAvatar
           id={thread.id}
           name={thread.name}
           avatarUrl={thread.avatar}
           isGroup={thread.is_group}
-          memberCount={thread.is_group ? threadMemberCount(thread) : undefined}
           size={56}
           mediaCache={mediaCache}
         />
@@ -337,7 +336,7 @@ export function InfoDrawer() {
                   <div className="flex max-h-48 flex-col gap-0.5 overflow-y-auto pt-1 pb-1">
                     {thread.presentation.members.map((m) => (
                       <div key={m.id} className="flex items-center gap-2.5 py-1">
-                        <Avatar
+                        <UserAvatar
                           id={m.id}
                           name={m.name}
                           avatarUrl={m.avatar}

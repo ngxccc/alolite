@@ -29,7 +29,7 @@ export default defineConfig({
               return "vendor-react";
             }
             if (
-              id.includes("@radix-ui") ||
+              id.includes("@base-ui") ||
               id.includes("lucide-react") ||
               id.includes("zustand") ||
               id.includes("immer")
