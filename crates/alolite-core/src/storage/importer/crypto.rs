@@ -87,7 +87,7 @@ pub fn try_decrypt_zalo_pc_database(bytes: &[u8]) -> Option<Vec<u8>> {
 
 /// Decrypt SQLCipher v4 database pages with 80-byte reserve, 4096 page size, SHA-512 256k iterations.
 pub fn decrypt_sqlcipher_bytes(bytes: &[u8], passphrase: &[u8]) -> Option<Vec<u8>> {
-    use aes::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
+    use aes::cipher::{block_padding::NoPadding, BlockModeDecrypt, KeyIvInit};
 
     type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
@@ -113,15 +113,14 @@ pub fn decrypt_sqlcipher_bytes(bytes: &[u8], passphrase: &[u8]) -> Option<Vec<u8
     let mut out = Vec::with_capacity(bytes.len());
     for p in 0..num_pages {
         let page = &bytes[p * page_size..(p + 1) * page_size];
-        let iv = &page[page_size - reserve..page_size - reserve + 16];
+        let iv: &[u8; 16] = page[page_size - reserve..page_size - reserve + 16]
+            .try_into()
+            .ok()?;
         let mut dec_buf;
         if p == 0 {
             dec_buf = page[16..page_size - reserve].to_vec();
             let decryptor = Aes256CbcDec::new((&derived_key).into(), iv.into());
-            if decryptor
-                .decrypt_padded_mut::<NoPadding>(&mut dec_buf)
-                .is_err()
-            {
+            if decryptor.decrypt_padded::<NoPadding>(&mut dec_buf).is_err() {
                 return None;
             }
             // Check SQLite magic page size (offset 0..2 in decrypted buffer)
@@ -134,10 +133,7 @@ pub fn decrypt_sqlcipher_bytes(bytes: &[u8], passphrase: &[u8]) -> Option<Vec<u8
         } else {
             dec_buf = page[0..page_size - reserve].to_vec();
             let decryptor = Aes256CbcDec::new((&derived_key).into(), iv.into());
-            if decryptor
-                .decrypt_padded_mut::<NoPadding>(&mut dec_buf)
-                .is_err()
-            {
+            if decryptor.decrypt_padded::<NoPadding>(&mut dec_buf).is_err() {
                 return None;
             }
             out.extend_from_slice(&dec_buf);

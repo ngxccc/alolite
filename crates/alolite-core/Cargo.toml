@@ -2,6 +2,7 @@
 name = "alolite-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -10,19 +11,19 @@ description = "UI-independent Zalo protocol, CoreEngine, SQLite store, and MCP r
 
 [dependencies]
 # Cryptography & Network Encoding
-aes = "0.8"
-cbc = "0.1"
-cipher = "0.4"
-md-5 = "0.10"
-sha2 = "0.10"
+aes = "0.9"
+cbc = "0.2"
+cipher = "0.5"
+md-5 = "0.11"
+sha2 = "0.11"
 base64 = "0.23"
-aes-gcm = "0.10"
-rsa = "0.9.10"
-generic-array = "0.14"
+aes-gcm = "0.11"
+rsa = { version = "0.10", features = ["pkcs1v15"] }
+generic-array = "1"
 
 # Trusted-device protocol (Curve25519 identity keys, XEdDSA, linking MAC)
-curve25519-dalek = { version = "4", features = ["digest"] }
-hmac = "0.12"
+curve25519-dalek = { version = "5", features = ["digest"] }
+hmac = "0.13"
 subtle = "2"
 getrandom = "0.4"
 zeroize = { version = "1", features = ["derive"] }
@@ -32,22 +33,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
-qrcode = { version = "0.14.1", default-features = false }
+qrcode = { version = "0.15", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 
 # Compression
 flate2 = "1"
 lzma-rs = "0.3.0"
-zstd = "0.14.3"
+zstd = "0.14.5"
 
 # Networking & Async Runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "process"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
-reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["cookies", "json", "rustls"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 # Local SQLite Storage
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 specta = { version = "2.0.0-rc.28", features = ["derive", "serde_json"] }
 
 [dev-dependencies]

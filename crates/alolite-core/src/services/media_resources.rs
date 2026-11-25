@@ -43,7 +43,7 @@ impl MediaKey {
             MediaQuality::Preview => 1,
             MediaQuality::Original => 2,
         }]);
-        format!("{:x}", hash.finalize())
+        crate::common::hex_lower(&hash.finalize())
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,7 +255,9 @@ impl PrivateMediaCache {
         if account.is_empty() {
             return Err(MediaError::AccountMismatch);
         }
-        let directory = root.join(format!("{:x}", Sha256::digest(account.as_bytes())));
+        let directory = root.join(crate::common::hex_lower(&Sha256::digest(
+            account.as_bytes(),
+        )));
         std::fs::create_dir_all(&directory).map_err(|_| MediaError::Io)?;
         #[cfg(unix)]
         {

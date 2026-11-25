@@ -7,10 +7,10 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 
-static CURRENT_SYNC_KEYS: Mutex<Option<(rsa::RsaPrivateKey, String)>> = Mutex::new(None);
+static CURRENT_SYNC_KEYS: Mutex<Option<(rsa::PrivateKey, String)>> = Mutex::new(None);
 
 /// Retrieve the active RSA-2048 keypair used for mobile sync decryption without consuming it.
-pub fn get_sync_keys() -> Option<(rsa::RsaPrivateKey, String)> {
+pub fn get_sync_keys() -> Option<(rsa::PrivateKey, String)> {
     CURRENT_SYNC_KEYS.lock().ok().and_then(|g| g.clone())
 }
 
@@ -34,11 +34,11 @@ pub fn clear_sync_keys() {
 pub fn generate_sync_public_key() -> String {
     use base64::Engine;
     use rsa::pkcs8::EncodePublicKey;
-    use rsa::{RsaPrivateKey, RsaPublicKey};
+    use rsa::{PrivateKey, PublicKey};
 
-    let mut rng = rsa::rand_core::OsRng;
-    if let Ok(priv_key) = RsaPrivateKey::new(&mut rng, 2048) {
-        let pub_key = RsaPublicKey::from(&priv_key);
+    let mut rng = getrandom::SysRng;
+    if let Ok(priv_key) = PrivateKey::new(&mut rng, 2048) {
+        let pub_key = PublicKey::from(&priv_key);
         if let Ok(der) = pub_key.to_public_key_der() {
             let b64 = base64::engine::general_purpose::STANDARD.encode(der.as_bytes());
             if let Ok(mut g) = CURRENT_SYNC_KEYS.lock() {
@@ -103,7 +103,7 @@ pub fn decrypt_and_unpack_zdb4_container(
     crypt_data: &[u8],
     raw_key: &[u8],
 ) -> Result<Vec<(String, Vec<u8>)>> {
-    use aes::cipher::{BlockDecryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeDecrypt, KeyIvInit};
 
     if raw_key.len() < 16 {
         anyhow::bail!("decrypted RSA sync key too short: {} bytes", raw_key.len());
@@ -134,7 +134,7 @@ pub fn decrypt_and_unpack_zdb4_container(
         }
         let mut buf = chunk[..aligned_len].to_vec();
         let dec = Aes256CbcDec::new(key_32.into(), &iv_zero.into());
-        dec.decrypt_padded_mut::<cipher::block_padding::NoPadding>(&mut buf)
+        dec.decrypt_padded::<cipher::block_padding::NoPadding>(&mut buf)
             .map_err(|e| anyhow::anyhow!("AES-256-CBC chunk decrypt failed: {e:?}"))?;
         decrypted.extend_from_slice(&buf);
     }
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn decrypt_and_unpack_zdb4_container_handles_multi_chunk_iv_reset_and_sanitizes_toc() {
-        use aes::cipher::{BlockEncryptMut, KeyIvInit};
+        use aes::cipher::{BlockModeEncrypt, KeyIvInit};
 
         let entry_a: Vec<u8> = (0..70_000u32)
             .map(|i| ((i.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)) >> 24) as u8)
@@ -271,7 +271,7 @@ mod tests {
             let mut buf = chunk.to_vec();
             let len = buf.len();
             let enc = Aes256CbcEnc::new(key_32.into(), &iv_zero.into());
-            enc.encrypt_padded_mut::<cipher::block_padding::NoPadding>(&mut buf, len)
+            enc.encrypt_padded::<cipher::block_padding::NoPadding>(&mut buf, len)
                 .unwrap();
             ciphertext.extend_from_slice(&buf);
         }

@@ -26,7 +26,6 @@ pub async fn fetch_mobile_backup_container(
     encrypted_key: &str,
 ) -> Result<DownloadedBackup> {
     use base64::Engine;
-    use rsa::Pkcs1v15Encrypt;
 
     if url.is_empty() {
         anyhow::bail!("empty backup url");
@@ -58,7 +57,7 @@ pub async fn fetch_mobile_backup_container(
 
     let entries = tokio::task::spawn_blocking(move || -> Result<Vec<(String, Vec<u8>)>> {
         let enc_bytes = base64::engine::general_purpose::STANDARD.decode(enc_key_owned.trim())?;
-        let raw_key = priv_key.decrypt(Pkcs1v15Encrypt, &enc_bytes)?;
+        let raw_key = priv_key.pkcs1v15_decrypt(&enc_bytes)?;
         decrypt_and_unpack_zdb4_container(&crypt_data, &raw_key)
     })
     .await??;

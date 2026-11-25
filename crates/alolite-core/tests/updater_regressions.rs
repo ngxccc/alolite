@@ -101,7 +101,7 @@ fn limits() -> DownloadLimits {
 #[tokio::test]
 async fn download_accepts_exact_bytes_and_uppercase_sha256() {
     let body = b"validated release";
-    let checksum = format!("{:X}", Sha256::digest(body));
+    let checksum = alolite_core::common::hex_lower(&Sha256::digest(body)).to_ascii_uppercase();
     let url = serve(response(body, body.len(), "200 OK"), Duration::ZERO);
     assert_eq!(
         fetch(&url, Some(&checksum), Some(body.len() as u64), limits())

@@ -1,6 +1,6 @@
 //! Linking flow: identity keys, QR payload, relink id and companion proof.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
