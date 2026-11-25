@@ -138,8 +138,11 @@ runs:
         if command -v rustup >/dev/null 2>&1; then
           rustup update stable --no-self-update
           rustup default stable
-          if [ -n "${{ inputs.components }}" ]; then
-            rustup component add ${{ inputs.components }}
+          components="${{ inputs.components }}"
+          components="${components//,/ }"
+          if [ -n "${components// /}" ]; then
+            # shellcheck disable=SC2086
+            rustup component add $components
           fi
         fi
 
