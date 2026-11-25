@@ -46,7 +46,7 @@ if [ -n "$MD_OR_SCRIPT_FILES" ]; then
   echo "🔍 [pre-commit] Checking Markdown & scripts format (oxfmt)..."
   if [ -x "./apps/desktop/node_modules/.bin/oxfmt" ] && [ -f ".oxfmtrc.json" ]; then
     # shellcheck disable=SC2086
-    if ! ./apps/desktop/node_modules/.bin/oxfmt --config .oxfmtrc.json --check $MD_OR_SCRIPT_FILES >/dev/null 2>&1; then
+    if ! ./apps/desktop/node_modules/.bin/oxfmt --config .oxfmtrc.json --check --no-error-on-unmatched-pattern $MD_OR_SCRIPT_FILES >/dev/null 2>&1; then
       echo ""
       echo "❌ [pre-commit] Markdown or scripts formatting check failed!"
       echo "   Please run:"

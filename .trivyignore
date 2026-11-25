@@ -1,0 +1,5 @@
+# GHSA-wrw7-89jp-8q8g: Unsoundness in glib::VariantStrIter (fixed in glib 0.20.0).
+# glib 0.18.5 is required transitively by gtk 0.18.2 / webkit2gtk 2.0.2 / tao / wry / tauri v2
+# (gtk3-rs is frozen at 0.18.x and cannot upgrade to glib 0.20.0).
+# alolite does not use glib::VariantStrIter. Re-evaluate if Tauri migrates off gtk3-rs 0.18.x.
+GHSA-wrw7-89jp-8q8g
