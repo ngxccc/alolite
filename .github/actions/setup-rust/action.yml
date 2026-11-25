@@ -27,7 +27,7 @@ inputs:
     required: false
     default: "false"
   packaging-tools:
-    description: "Install additional Linux packaging tools (rpm, desktop-file-utils, libfuse2, patchelf, etc.)"
+    description: "Install additional Linux packaging tools (rpm, desktop-file-utils, libfuse2, patchelf, appstream, gnupg2, etc.)"
     required: false
     default: "false"
 
@@ -183,11 +183,22 @@ runs:
       if: runner.os == 'Linux' && inputs.packaging-tools == 'true'
       shell: bash
       run: |
+        missing_pkgs=()
         if ! command -v rpmbuild >/dev/null 2>&1; then
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            rpm file desktop-file-utils libfuse2 jq patchelf \
+          missing_pkgs+=(
+            rpm file desktop-file-utils libfuse2 jq patchelf
             librsvg2-dev libayatana-appindicator3-dev libxdo-dev
+          )
+        fi
+        if ! command -v appstreamcli >/dev/null 2>&1; then
+          missing_pkgs+=(appstream)
+        fi
+        if ! command -v gpg >/dev/null 2>&1 && ! command -v gpg2 >/dev/null 2>&1; then
+          missing_pkgs+=(gnupg2)
+        fi
+        if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "${missing_pkgs[@]}"
         else
           echo "Packaging tools already present (container or system)."
         fi
