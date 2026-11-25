@@ -51,6 +51,7 @@ describe("Domain Stores Architecture", () => {
       avatar: null,
       is_group: true,
       messages: [],
+      pinned_messages: [],
       presentation: {
         members: [],
         member_count: null,

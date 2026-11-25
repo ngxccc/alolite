@@ -26,7 +26,7 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
   const toggleInfoDrawer = useChatStore((s) => s.toggleInfoDrawer);
 
   return (
-    <header className="flex h-[68px] shrink-0 items-center justify-between border-b border-border bg-sidebar px-4">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-5">
       <div className="flex min-w-0 items-center gap-3">
         <UserAvatar
           id={thread.id}
@@ -34,28 +34,31 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
           avatarUrl={thread.avatar}
           isGroup={thread.is_group}
           memberCount={thread.is_group ? threadMemberCount(thread) : undefined}
-          size={48}
+          size={38}
           mediaCache={mediaCache}
         />
         <div className="min-w-0">
-          <div className="truncate text-lg font-semibold text-foreground">
-            {thread.name || thread.id}
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-sm font-semibold text-foreground">
+              {thread.name || thread.id}
+            </h1>
+            {thread.is_group && thread.presentation.member_count ? (
+              <span className="shrink-0 rounded-full border border-border bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
+                {thread.presentation.member_count} thành viên
+              </span>
+            ) : null}
           </div>
           <div
             className={cn(
-              "flex items-center gap-1 text-sm",
+              "flex items-center gap-1 text-xs",
               onlineInfo?.[0] ? "font-medium text-online" : "text-muted-foreground",
             )}
           >
             {thread.is_group ? (
               <>
-                <Users className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">
-                  {thread.presentation.member_count
-                    ? `${thread.presentation.member_count} thành viên`
-                    : "Nhóm trò chuyện"}
-                </span>
-                <Tag className="ml-0.5 h-3.5 w-3.5 shrink-0 opacity-60" />
+                <Users className="h-3 w-3 shrink-0" />
+                <span className="truncate">Nhóm trò chuyện</span>
+                <Tag className="ml-0.5 h-3 w-3 shrink-0 opacity-60" />
               </>
             ) : thread.name.includes("Cloud của tôi") ? (
               "Lưu trữ đám mây cá nhân"
@@ -67,7 +70,7 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
       </div>
 
       {/* Right-side icon buttons — 32px each */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         {thread.is_group ? (
           <Button
             variant="ghost"
@@ -76,7 +79,7 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
             onClick={() => setPhoneLookupOpen(true)}
           >
-            <UserPlus className="h-5 w-5" />
+            <UserPlus className="h-4.5 w-4.5" />
           </Button>
         ) : null}
 
@@ -95,22 +98,23 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
           className="h-8 w-8 text-muted-foreground hover:text-foreground"
           onClick={toggleFilterStarredOnly}
         >
-          <Star className={cn("h-5 w-5", filterStarredOnly && "text-warning")} />
+          <Star className={cn("h-4.5 w-4.5", filterStarredOnly && "text-warning")} />
         </Button>
 
-        {/* Info panel toggle — filled blue square when active */}
+        {/* Info panel toggle */}
         <button
           type="button"
           title="Thông tin hội thoại"
+          aria-pressed={infoDrawerOpen}
           className={cn(
             "flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors",
             infoDrawerOpen
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-[rgba(255,255,255,0.05)] hover:text-foreground",
+              ? "border border-border bg-secondary text-foreground"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
           )}
           onClick={toggleInfoDrawer}
         >
-          <PanelRight className="h-5 w-5" />
+          <PanelRight className="h-4.5 w-4.5" />
         </button>
       </div>
     </header>

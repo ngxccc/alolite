@@ -1,9 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   BellOff,
   CheckCheck,
-  ChevronDown,
   EyeOff,
   MailCheck,
   MailOpen,
@@ -11,16 +10,15 @@ import {
   Pin,
   PinOff,
   Search,
+  SlidersHorizontal,
+  SquarePen,
   Trash2,
-  UserPlus,
-  Users,
   X,
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Badge } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -62,7 +60,26 @@ export function ThreadsSidebar() {
   const setPhoneLookupError = useContactsStore((s) => s.setPhoneLookupError);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
+
+  const isMac =
+    typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/i.test(navigator.platform);
+  const shortcutLabel = isMac ? "⌘K" : "Ctrl+K";
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const totalUnread = threads.reduce((sum, t) => sum + threadUnreadCount(t, unreadCounts), 0);
 
   const hiddenSet = new Set(settings?.hidden_threads ?? []);
   const pinnedSet = new Set(settings?.pinned_threads ?? []);
@@ -136,63 +153,136 @@ export function ThreadsSidebar() {
   };
 
   return (
-    <section className="flex h-full w-[345px] shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
-      {/* Search row — 64 px tall */}
-      <div className="flex h-16 shrink-0 items-center justify-between px-4">
-        <div className="flex h-8 w-[240px] shrink-0 items-center gap-1.5 rounded-[5px] bg-muted px-2.5">
+    <section
+      aria-label="Danh sách hội thoại"
+      className="flex h-full w-[300px] shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
+    >
+      <header className="flex shrink-0 flex-col gap-3 border-b border-border p-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">Tin nhắn</h2>
+          <div className="flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    title={
+                      threadFilter === "direct"
+                        ? "Đang lọc: Cá nhân"
+                        : threadFilter === "groups"
+                          ? "Đang lọc: Nhóm"
+                          : "Phân loại hội thoại"
+                    }
+                    className={cn(
+                      "inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors",
+                      threadFilter !== "all"
+                        ? "border border-border bg-secondary text-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    )}
+                  />
+                }
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setThreadFilter("all")}>
+                  Tất cả phân loại
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setThreadFilter("direct")}>
+                  Tin nhắn cá nhân
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setThreadFilter("groups")}>
+                  Tin nhắn nhóm
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    title="Tùy chọn khác"
+                    className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  />
+                }
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => {
+                    for (const t of threads) {
+                      const unread = threadUnreadCount(t, unreadCounts);
+                      if (unread > 0) {
+                        const last = t.messages.at(-1);
+                        if (last?.id) void ipc.sendSeen(t.id, t.is_group, last.id);
+                      }
+                    }
+                  }}
+                >
+                  <CheckCheck className="h-4 w-4" /> Đánh dấu đã đọc tất cả
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <button
+              type="button"
+              aria-label="Tạo hội thoại hoặc tìm số điện thoại"
+              onClick={() => setPhoneLookupOpen(true)}
+              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              <SquarePen className="h-3.5 w-3.5" />
+              <span>Mới</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Command Search Input */}
+        <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 focus-within:ring-1 focus-within:ring-ring">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
+            ref={searchInputRef}
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => handleSearchKeyDown(e.key)}
-            placeholder="Tìm kiếm"
-            className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setSearchQuery("");
+                searchInputRef.current?.blur();
+                return;
+              }
+              handleSearchKeyDown(e.key);
+            }}
+            placeholder="Tìm hội thoại..."
+            className="w-full border-none bg-transparent p-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
           {searchQuery ? (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
               title="Xóa tìm kiếm"
-              className="inline-flex h-4 w-4 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground"
+              className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground"
             >
               <X className="h-3 w-3" />
             </button>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Thêm bạn"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
-            onClick={() => setPhoneLookupOpen(true)}
-          >
-            <UserPlus className="h-[18px] w-[18px]" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Tạo nhóm"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
-            onClick={() => setPhoneLookupOpen(true)}
-          >
-            <Users className="h-[18px] w-[18px]" />
-          </Button>
-        </div>
-      </div>
+          ) : (
+            <kbd className="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {shortcutLabel}
+            </kbd>
+          )}
+        </label>
 
-      {/* Tabs + filter row — 32 px tall */}
-      <div className="flex h-8 shrink-0 items-center justify-between border-b border-border/40 px-4">
-        <div className="flex h-full items-center gap-4 text-sm">
+        {/* Segmented TabsList */}
+        <div className="grid grid-cols-2 rounded-md bg-muted p-1 text-muted-foreground">
           <button
             type="button"
             onClick={() => setUnreadOnly(false)}
             className={cn(
-              "relative flex h-full cursor-pointer items-center transition-colors",
+              "cursor-pointer rounded-sm py-1 text-xs font-medium transition-colors",
               !unreadOnly
-                ? "font-medium text-accent-foreground after:absolute after:right-0 after:bottom-0 after:left-0 after:h-0.5 after:bg-accent-foreground"
-                : "font-normal text-muted-foreground hover:text-foreground",
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             Tất cả
@@ -201,78 +291,16 @@ export function ThreadsSidebar() {
             type="button"
             onClick={() => setUnreadOnly(true)}
             className={cn(
-              "relative flex h-full cursor-pointer items-center transition-colors",
+              "cursor-pointer rounded-sm py-1 text-xs font-medium tabular-nums transition-colors",
               unreadOnly
-                ? "font-medium text-accent-foreground after:absolute after:right-0 after:bottom-0 after:left-0 after:h-0.5 after:bg-accent-foreground"
-                : "font-normal text-muted-foreground hover:text-foreground",
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
-            Chưa đọc
+            {totalUnread > 0 ? `Chưa đọc (${totalUnread > 99 ? "99+" : totalUnread})` : "Chưa đọc"}
           </button>
         </div>
-
-        <div className="flex items-center gap-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button
-                  type="button"
-                  className="inline-flex cursor-pointer items-center gap-0.5 text-sm text-muted-foreground transition hover:text-foreground"
-                />
-              }
-            >
-              <span>
-                {threadFilter === "direct"
-                  ? "Cá nhân"
-                  : threadFilter === "groups"
-                    ? "Nhóm"
-                    : "Phân loại"}
-              </span>
-              <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setThreadFilter("all")}>
-                Tất cả phân loại
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setThreadFilter("direct")}>
-                Tin nhắn cá nhân
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setThreadFilter("groups")}>
-                Tin nhắn nhóm
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button
-                  type="button"
-                  title="Tùy chọn khác"
-                  className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                />
-              }
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => {
-                  for (const t of threads) {
-                    const unread = threadUnreadCount(t, unreadCounts);
-                    if (unread > 0) {
-                      const last = t.messages.at(-1);
-                      if (last?.id) void ipc.sendSeen(t.id, t.is_group, last.id);
-                    }
-                  }
-                }}
-              >
-                <CheckCheck className="h-4 w-4" /> Đánh dấu đã đọc tất cả
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+      </header>
 
       {/* Conversation list — virtualised, items use inset-x-2 for 8 px side margins */}
       <div ref={listRef} className="flex-1 overflow-y-auto py-1">

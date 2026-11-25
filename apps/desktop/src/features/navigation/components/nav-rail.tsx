@@ -43,14 +43,12 @@ import { threadUnreadCount } from "@/features/threads/utils/threads";
 
 function RailBtn({
   active = false,
-  isDark,
   label,
   onClick,
   children,
   badge,
 }: {
   active?: boolean;
-  isDark: boolean;
   label: string;
   onClick?: () => void;
   children: React.ReactNode;
@@ -64,20 +62,19 @@ function RailBtn({
             type="button"
             onClick={onClick}
             aria-label={label}
+            aria-current={active ? "page" : undefined}
             className={cn(
-              "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none",
+              "relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 select-none",
               active
-                ? isDark
-                  ? "bg-white/[0.15] text-white"
-                  : "bg-white/[0.18] text-white"
-                : "text-white/70 hover:bg-white/[0.1] hover:text-white",
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
             )}
           />
         }
       >
         {children}
         {badge != null && badge > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-[3px] text-xs leading-none font-bold text-white tabular-nums">
+          <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">
             {badge > 99 ? "99+" : badge}
           </span>
         )}
@@ -119,17 +116,17 @@ function SettingsMenu({ isDark }: { isDark: boolean }) {
                   type="button"
                   aria-label="Cài đặt"
                   className={cn(
-                    "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none focus-visible:outline-none",
+                    "relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 select-none focus-visible:outline-none",
                     open
-                      ? "bg-white/[0.15] text-white"
-                      : "text-white/70 hover:bg-white/[0.1] hover:text-white",
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   )}
                 />
               }
             />
           }
         >
-          <Settings className="h-6 w-6" />
+          <Settings className="h-5 w-5" />
         </TooltipTrigger>
         <TooltipContent side="right">Cài đặt</TooltipContent>
       </Tooltip>
@@ -238,7 +235,7 @@ function ToolItemBtn({ item }: { item: ToolItemDef }) {
       onClick={item.onSelect}
       className={cn(
         "flex flex-col items-center gap-1.5 rounded-lg p-2.5 text-center transition-colors",
-        item.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-white/[0.05]",
+        item.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-accent",
       )}
     >
       <div
@@ -324,17 +321,17 @@ function ToolsPopover() {
                   type="button"
                   aria-label="Công cụ zBusiness"
                   className={cn(
-                    "relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-all duration-150 select-none",
+                    "relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 select-none",
                     open
-                      ? "bg-white/[0.15] text-white"
-                      : "text-white/70 hover:bg-white/[0.1] hover:text-white",
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   )}
                 />
               }
             />
           }
         >
-          <Briefcase className="h-6 w-6" />
+          <Briefcase className="h-5 w-5" />
         </TooltipTrigger>
         <TooltipContent side="right">Công cụ zBusiness</TooltipContent>
       </Tooltip>
@@ -388,10 +385,10 @@ export function NavRail() {
   return (
     <aside
       aria-label="Thanh điều hướng chính"
-      className="flex h-full w-16 shrink-0 flex-col items-center justify-between border-r border-border bg-rail py-3 text-rail-foreground"
+      className="flex h-full w-16 shrink-0 flex-col items-center justify-between border-r border-border bg-rail py-4 text-rail-foreground"
     >
       {/* ── Top group: avatar + main navigation tabs ── */}
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex w-full flex-col items-center gap-5">
         {/* User avatar – opens account settings */}
         <Tooltip>
           <TooltipTrigger
@@ -399,7 +396,7 @@ export function NavRail() {
               <button
                 type="button"
                 onClick={() => setSettingsOpen(true, "account")}
-                className="relative mb-2 cursor-pointer rounded-full ring-2 ring-white/25 transition hover:ring-white/50 focus-visible:outline-none"
+                className="relative cursor-pointer rounded-full ring-1 ring-border transition hover:ring-ring focus-visible:outline-none"
               />
             }
           >
@@ -411,43 +408,46 @@ export function NavRail() {
               mediaCache={mediaCache}
             />
             {/* Online status dot */}
-            <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-rail bg-online" />
+            <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full bg-online ring-2 ring-rail" />
           </TooltipTrigger>
           <TooltipContent side="right">{displayName || "Tài khoản"}</TooltipContent>
         </Tooltip>
 
-        {/* Messages tab */}
-        <RailBtn
-          active={activeSection === "chat"}
-          isDark={isDark}
-          label="Tin nhắn"
-          onClick={() => setActiveSection("chat")}
-          badge={totalUnread}
-        >
-          <MessageSquare className="h-6 w-6" strokeWidth={activeSection === "chat" ? 2.5 : 1.75} />
-        </RailBtn>
+        <nav className="flex w-full flex-col items-center gap-1.5 px-2">
+          {/* Messages tab */}
+          <RailBtn
+            active={activeSection === "chat"}
+            label="Tin nhắn"
+            onClick={() => setActiveSection("chat")}
+            badge={totalUnread}
+          >
+            <MessageSquare
+              className="h-5 w-5"
+              strokeWidth={activeSection === "chat" ? 2.25 : 1.75}
+            />
+          </RailBtn>
 
-        {/* Contacts tab */}
-        <RailBtn
-          active={activeSection === "contacts"}
-          isDark={isDark}
-          label="Danh bạ"
-          onClick={() => setActiveSection("contacts")}
-        >
-          <Users className="h-6 w-6" strokeWidth={activeSection === "contacts" ? 2.5 : 1.75} />
-        </RailBtn>
+          {/* Contacts tab */}
+          <RailBtn
+            active={activeSection === "contacts"}
+            label="Danh bạ"
+            onClick={() => setActiveSection("contacts")}
+          >
+            <Users className="h-5 w-5" strokeWidth={activeSection === "contacts" ? 2.25 : 1.75} />
+          </RailBtn>
+
+          {/* My Documents – opens Cloud của tôi thread */}
+          <RailBtn label="Cloud của tôi" onClick={openCloudThread}>
+            <FolderOpen className="h-5 w-5" strokeWidth={1.75} />
+          </RailBtn>
+        </nav>
       </div>
 
       {/* ── Bottom group: utility / settings buttons ── */}
-      <div className="flex flex-col items-center gap-1 pb-0.5">
+      <div className="flex w-full flex-col items-center gap-1.5 px-2">
         {/* zCloud – trigger cloud sync */}
-        <RailBtn isDark={isDark} label="zCloud" onClick={() => setIsSyncing(true)}>
-          <Cloud className="h-6 w-6" />
-        </RailBtn>
-
-        {/* My Documents – opens Cloud của tôi thread */}
-        <RailBtn isDark={isDark} label="Cloud của tôi" onClick={openCloudThread}>
-          <FolderOpen className="h-6 w-6" />
+        <RailBtn label="zCloud" onClick={() => setIsSyncing(true)}>
+          <Cloud className="h-5 w-5" strokeWidth={1.75} />
         </RailBtn>
 
         {/* zBusiness Tools popover */}

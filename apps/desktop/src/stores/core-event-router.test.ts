@@ -74,6 +74,7 @@ function makeThread(id: string, name: string, ts: number, msgs: ChatMessage[] = 
     avatar: null,
     is_group: false,
     messages: msgs,
+    pinned_messages: [],
     unread: {
       last_seen_id: null,
       unread_ids: [],

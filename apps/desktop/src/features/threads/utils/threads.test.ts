@@ -58,6 +58,7 @@ function thread(id: string, ts: number): Thread {
     avatar: null,
     is_group: false,
     messages: [],
+    pinned_messages: [],
     unread: {
       last_seen_id: null,
       unread_ids: [],

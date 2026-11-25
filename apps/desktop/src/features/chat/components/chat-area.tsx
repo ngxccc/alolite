@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
 import { cn } from "cn";
@@ -26,9 +26,12 @@ export function ChatArea() {
   const inChatSearchQuery = useUIStore((s) => s.inChatSearchQuery);
   const friendStatusByUid = useContactsStore((s) => s.friendStatusByUid);
   const [reactPickerFor, setReactPickerFor] = useState<string | null>(null);
+  const hydratedThreadIdsRef = useRef<Set<string>>(new Set());
 
   const thread: Thread | undefined = threads.find((t) => t.id === selectedThreadId);
-  const pinnedMessages = thread?.messages.filter((m) => m.is_pinned) ?? [];
+  const pinnedMessages = thread?.pinned_messages.length
+    ? thread.pinned_messages
+    : (thread?.messages.filter((m) => m.is_pinned) ?? []);
 
   const { resolveSender, resolveReplySenderName } = useSenderLookup();
 
@@ -45,8 +48,16 @@ export function ChatArea() {
   }
 
   useEffect(() => {
-    if (!thread || thread.is_group || thread.name.includes("Cloud của tôi")) return;
-    if (!friendStatusByUid[thread.id] && isTauriRuntime()) {
+    if (!thread || !isTauriRuntime()) return;
+    if (!hydratedThreadIdsRef.current.has(thread.id)) {
+      hydratedThreadIdsRef.current.add(thread.id);
+      void ipc.loadGroupHistory(thread.id, thread.is_group, thread.messages.length);
+    }
+    if (
+      !thread.is_group &&
+      !thread.name.includes("Cloud của tôi") &&
+      !friendStatusByUid[thread.id]
+    ) {
       void ipc.checkFriendStatus(thread.id);
     }
   }, [thread, friendStatusByUid]);

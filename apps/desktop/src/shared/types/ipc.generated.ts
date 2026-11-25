@@ -494,6 +494,7 @@ export type Thread = {
 	avatar: string | null,
 	is_group: boolean,
 	messages: ChatMessage[],
+	pinned_messages: ChatMessage[],
 	unread: UnreadState,
 };
 
