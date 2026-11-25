@@ -212,7 +212,8 @@ impl QrLogin {
         let payload = self
             .payload()
             .ok_or_else(|| anyhow::anyhow!("không có qr_cnt lẫn base64_qr để hiển thị"))?;
-        let code = qrcode::QrCode::new(payload.as_bytes())?;
+        let code = qrcode::QrCode::new(payload.as_bytes())
+            .map_err(|e| anyhow::anyhow!("QR encode failed: {e:?}"))?;
         let quiet_zone = 4;
         let w = code.width() + quiet_zone * 2;
         let mut pixels = Vec::with_capacity(w * w * 4);

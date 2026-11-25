@@ -4,7 +4,7 @@
 
 use aes::{Aes128, Aes256};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cbc::cipher::{block_padding::Pkcs7, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use md5::{Digest, Md5};
 
 /// The bundle uses `iv = Hex.parse("0000…")` — 16 zero bytes, always.
@@ -18,12 +18,12 @@ pub fn encode_aes(key: &[u8], text: &str) -> anyhow::Result<String> {
     let ct = match key.len() {
         16 => {
             let enc = cbc::Encryptor::<Aes128>::new_from_slices(key, &ZERO_IV)?;
-            enc.encrypt_padded_mut::<Pkcs7>(&mut buf, text.len())
+            enc.encrypt_padded::<Pkcs7>(&mut buf, text.len())
                 .map_err(|_| anyhow::anyhow!("AES-128 padding failed"))?
         }
         32 => {
             let enc = cbc::Encryptor::<Aes256>::new_from_slices(key, &ZERO_IV)?;
-            enc.encrypt_padded_mut::<Pkcs7>(&mut buf, text.len())
+            enc.encrypt_padded::<Pkcs7>(&mut buf, text.len())
                 .map_err(|_| anyhow::anyhow!("AES-256 padding failed"))?
         }
         len => anyhow::bail!("Invalid AES key length: {len} (expected 16 or 32)"),
@@ -39,12 +39,12 @@ pub fn decode_aes(key: &[u8], b64: &str) -> anyhow::Result<String> {
     let pt = match key.len() {
         16 => {
             let dec = cbc::Decryptor::<Aes128>::new_from_slices(key, &ZERO_IV)?;
-            dec.decrypt_padded_mut::<Pkcs7>(&mut buf)
+            dec.decrypt_padded::<Pkcs7>(&mut buf)
                 .map_err(|_| anyhow::anyhow!("AES-128 unpad failed (wrong key or not PKCS7)"))?
         }
         32 => {
             let dec = cbc::Decryptor::<Aes256>::new_from_slices(key, &ZERO_IV)?;
-            dec.decrypt_padded_mut::<Pkcs7>(&mut buf)
+            dec.decrypt_padded::<Pkcs7>(&mut buf)
                 .map_err(|_| anyhow::anyhow!("AES-256 unpad failed (wrong key or not PKCS7)"))?
         }
         len => anyhow::bail!("Invalid AES key length: {len} (expected 16 or 32)"),

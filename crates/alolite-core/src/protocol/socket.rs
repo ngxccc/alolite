@@ -187,7 +187,9 @@ fn gcm_decrypt(key: &[u8], blob: &[u8]) -> Result<Vec<u8>> {
     if blob.len() < 48 {
         bail!("aes-gcm blob too short ({})", blob.len());
     }
-    let nonce = aes_gcm::Nonce::<U16>::from_slice(&blob[..16]);
+    let nonce: &aes_gcm::Nonce<U16> = (&blob[..16])
+        .try_into()
+        .map_err(|_| anyhow!("invalid nonce length"))?;
     let payload = Payload {
         msg: &blob[32..],
         aad: &blob[16..32],
@@ -510,13 +512,13 @@ async fn run_once(
                 if authed {
                     let body = json!({ "eventId": now_ms() });
                     let f = encode_frame(ws::PING, ws::SUB_KEEP_CONNECTION, 1, Some(&body));
-                    ws.send(Message::Binary(f)).await?;
+                    ws.send(Message::Binary(f.into())).await?;
                     trace("-> ping");
                 }
             }
             Some(frame) = out_rx.recv() => {
                 if authed {
-                    ws.send(Message::Binary(frame)).await?;
+                    ws.send(Message::Binary(frame.into())).await?;
                     trace("-> outbound ws frame");
                 }
             }
@@ -574,7 +576,7 @@ async fn run_once(
                     for (qcmd, qsub) in queues_from_auth(&auth) {
                         let id = format!("req_{req_id}");
                         req_id += 1;
-                        ws.send(Message::Binary(pull_frame(qcmd, qsub, &id))).await?;
+                        ws.send(Message::Binary(pull_frame(qcmd, qsub, &id).into())).await?;
                         trace(format!("-> pull {qcmd}_{qsub} {id}"));
                     }
                     continue;
@@ -608,7 +610,7 @@ async fn run_once(
                         });
                         let _ = ws
                             .send(Message::Binary(
-                                encode_frame(ws::GET_MSG, 0, 1, Some(&get_req)),
+                                encode_frame(ws::GET_MSG, 0, 1, Some(&get_req)).into(),
                             ))
                             .await;
                         trace(format!("-> get_msg 570_0 {id}"));
@@ -631,7 +633,7 @@ async fn run_once(
                     req_id += 1;
                     let _ = ws
                         .send(Message::Binary(
-                            pull_next_frame(cmd, sub_cmd, &id, last_id, pre_ids),
+                            pull_next_frame(cmd, sub_cmd, &id, last_id, pre_ids).into(),
                         ))
                         .await;
                     trace(format!("-> pull next {qkey} {id}"));

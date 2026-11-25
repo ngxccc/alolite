@@ -128,7 +128,7 @@ pub async fn download_release(
             return Err("Gói cập nhật tải về chưa hoàn tất".into());
         }
         if let Some(expected) = request.expected_sha256 {
-            let actual = format!("{:x}", hasher.finalize());
+            let actual = crate::common::hex_lower(&hasher.finalize());
             if !actual.eq_ignore_ascii_case(expected) {
                 return Err("Mã kiểm tra toàn vẹn SHA-256 không khớp".into());
             }

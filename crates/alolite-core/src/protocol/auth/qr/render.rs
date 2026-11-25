@@ -20,7 +20,8 @@ pub fn render_terminal(q: &QrLogin) -> Result<String> {
     let payload = q
         .payload()
         .ok_or_else(|| anyhow::anyhow!("không có payload để vẽ"))?;
-    let code = qrcode::QrCode::new(payload.as_bytes())?;
+    let code = qrcode::QrCode::new(payload.as_bytes())
+        .map_err(|e| anyhow::anyhow!("QR encode failed: {e:?}"))?;
     Ok(code
         .render::<Dense1x2>()
         .quiet_zone(true)

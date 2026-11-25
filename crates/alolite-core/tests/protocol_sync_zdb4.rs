@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use aes::cipher::{BlockEncryptMut, KeyIvInit};
+use aes::cipher::{BlockModeEncrypt, KeyIvInit};
 use alolite_core::messaging::Thread;
 use alolite_core::store::{
     commit_conv_archives_to_store, extract_conv_archives_from_entries, MessageStore, StoredMessage,
@@ -15,7 +15,7 @@ use alolite_core::sync::{
 };
 use base64::Engine;
 use rsa::pkcs8::DecodePublicKey;
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
+use rsa::PublicKey;
 use rusqlite::{params, Connection};
 
 fn push_tlv_le(buf: &mut Vec<u8>, tag: u32, payload: &[u8]) {
@@ -134,14 +134,14 @@ fn zdb4_sqlite_archive_ingest_resolves_dynamic_my_uid_and_group_member_senders()
     let pub_der = base64::engine::general_purpose::STANDARD
         .decode(&pub_b64)
         .expect("spki der");
-    let pub_key = RsaPublicKey::from_public_key_der(&pub_der).expect("valid rsa pubkey");
+    let pub_key = PublicKey::from_public_key_der(&pub_der).expect("valid rsa pubkey");
     let mobile_raw_key: [u8; 16] =
         *b"\xaa\xbb\xcc\xdd\x11\x22\x33\x44\x55\x66\x77\x88\x99\x00\xab\xcd";
     let encrypted_key_bytes = pub_key
-        .encrypt(&mut rsa::rand_core::OsRng, Pkcs1v15Encrypt, &mobile_raw_key)
+        .pkcs1v15_encrypt(&mobile_raw_key)
         .expect("rsa pkcs1v15 encrypt");
     let decrypted_raw = priv_key
-        .decrypt(Pkcs1v15Encrypt, &encrypted_key_bytes)
+        .pkcs1v15_decrypt(&encrypted_key_bytes)
         .expect("rsa pkcs1v15 decrypt");
     assert_eq!(decrypted_raw.as_slice(), &mobile_raw_key);
 
@@ -242,7 +242,7 @@ fn zdb4_sqlite_archive_ingest_resolves_dynamic_my_uid_and_group_member_senders()
     let key_32: &[u8; 32] = hex_key.as_bytes().try_into().unwrap();
     let mut crypt = container.clone();
     cbc::Encryptor::<aes::Aes256>::new(key_32.into(), (&[0u8; 16]).into())
-        .encrypt_padded_mut::<cipher::block_padding::NoPadding>(&mut crypt, container.len())
+        .encrypt_padded::<cipher::block_padding::NoPadding>(&mut crypt, container.len())
         .unwrap();
 
     let unpacked = decrypt_and_unpack_zdb4_container(&crypt, &decrypted_raw).unwrap();
