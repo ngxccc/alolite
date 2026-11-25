@@ -15,12 +15,13 @@ if [ ! -f target/release/alolite ] || [ ! -f target/release/alolite-desktop ]; t
   strip target/release/alolite target/release/alolite-desktop || true
 fi
 
-mkdir -p dist pkg_deb/DEBIAN pkg_deb/usr/bin pkg_deb/usr/share/applications pkg_deb/usr/share/icons/hicolor/256x256/apps
+mkdir -p dist pkg_deb/DEBIAN pkg_deb/usr/bin pkg_deb/usr/share/applications pkg_deb/usr/share/icons/hicolor/256x256/apps pkg_deb/usr/share/metainfo
 
 cp target/release/alolite pkg_deb/usr/bin/alolite
 cp target/release/alolite-desktop pkg_deb/usr/bin/alolite-desktop
 cp packaging/linux/alolite.desktop pkg_deb/usr/share/applications/alolite.desktop
 cp assets/app_icon.png pkg_deb/usr/share/icons/hicolor/256x256/apps/alolite.png
+cp packaging/linux/io.github.ngxccc.alolite.metainfo.xml pkg_deb/usr/share/metainfo/io.github.ngxccc.alolite.metainfo.xml
 
 cat > pkg_deb/DEBIAN/control << EOF
 Package: alolite

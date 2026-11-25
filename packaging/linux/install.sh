@@ -7,6 +7,7 @@ if [ "$(id -u)" -eq 0 ]; then
     BIN_DIR="/usr/local/bin"
     APP_DIR="/usr/local/share/applications"
     ICON_DIR="/usr/local/share/icons/hicolor/256x256/apps"
+    METAINFO_DIR="/usr/local/share/metainfo"
 elif command -v sudo >/dev/null 2>&1; then
     echo "Cài đặt AloLite vào /usr/local/bin (yêu cầu quyền sudo)..."
     exec sudo bash "$0" "$@"
@@ -14,14 +15,16 @@ else
     BIN_DIR="$HOME/.local/bin"
     APP_DIR="$HOME/.local/share/applications"
     ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+    METAINFO_DIR="$HOME/.local/share/metainfo"
 fi
 
-mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
+mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR" "$METAINFO_DIR"
 
 install -m 755 "$SCRIPT_DIR/alolite" "$BIN_DIR/alolite"
 install -m 755 "$SCRIPT_DIR/alolite-desktop" "$BIN_DIR/alolite-desktop"
 install -m 644 "$SCRIPT_DIR/alolite.desktop" "$APP_DIR/alolite.desktop"
 install -m 644 "$SCRIPT_DIR/alolite.png" "$ICON_DIR/alolite.png"
+install -m 644 "$SCRIPT_DIR/io.github.ngxccc.alolite.metainfo.xml" "$METAINFO_DIR/io.github.ngxccc.alolite.metainfo.xml"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
