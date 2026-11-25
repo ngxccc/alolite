@@ -197,8 +197,15 @@ runs:
           missing_pkgs+=(gnupg2)
         fi
         if [ "${#missing_pkgs[@]}" -gt 0 ]; then
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends "${missing_pkgs[@]}"
+          if [ "$(id -u)" -eq 0 ]; then
+            apt-get update -qq
+            apt-get install -y --no-install-recommends "${missing_pkgs[@]}"
+          elif command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "${missing_pkgs[@]}"
+          else
+            echo "::warning::Missing packaging tools (${missing_pkgs[*]}) and no root/sudo available in container; rebuild CI container image."
+          fi
         else
           echo "Packaging tools already present (container or system)."
         fi
