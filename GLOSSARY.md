@@ -53,6 +53,17 @@ Ubiquitous language for `alolite`. Use these terms verbatim in issues, ADRs, tes
 | **`alolite-core`**    | UI-independent Rust core crate (`crates/alolite-core`).                                                                                                          | "core", "alolite_core"                                               |
 | **`alolite-cli`**     | Headless CLI/launcher crate (`crates/alolite-cli`) that compiles to the `alolite` binary.                                                                        | "alolite-bin"                                                        |
 
+## Desktop UI Shell
+
+| Term               | Definition                                                                                                                                                    | Avoid                            |
+| :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------- |
+| **NavRail**        | Far-left 64px vertical navigation rail (`features/navigation/components/nav-rail.tsx`) switching sections, sync status, and settings.                         | "left bar", "icon menu"          |
+| **ThreadsSidebar** | 300px conversation list column (`features/threads/components/threads-sidebar.tsx`) with `Ctrl+K`/`⌘K` search, `Tất cả` / `Chưa đọc` tabs, and thread filters. | "chat list", "left drawer"       |
+| **ChatArea**       | Flexible (`1fr`) main conversation column (`features/chat/components/chat-area.tsx`) containing `ChatHeader`, `PinnedBar`, message list, and `Composer`.      | "main pane", "chat window"       |
+| **InfoDrawer**     | 300px right-hand thread inspector (`features/threads/components/info-drawer.tsx`) with quick actions, group members, and `Ảnh` / `File` / `Link` media tabs.  | "right sidebar", "details modal" |
+| **PinnedBar**      | Single-line pinned message banner (`features/chat/components/pinned-bar.tsx`) below `ChatHeader`.                                                             | "pin header", "announcement bar" |
+| **Composer**       | Bottom message input bar (`features/chat/components/composer.tsx`) with reply preview, link preview, sticker picker, and attachment upload.                   | "input box", "message bar"       |
+
 ## Invariants
 
 Domain invariants are tagged `INV-N` here and referenced verbatim from code and tests.
