@@ -3,6 +3,7 @@ import { useAuthStore } from "./use-auth-store";
 import { useChatStore } from "./use-chat-store";
 import { useUIStore } from "./use-ui-store";
 import { useContactsStore } from "./use-contacts-store";
+import { useMediaCacheStore } from "./use-media-cache-store";
 import type { ChatMessage, Thread } from "@/shared/types/ipc.generated";
 
 describe("Domain Stores Architecture", () => {
@@ -114,5 +115,23 @@ describe("Domain Stores Architecture", () => {
     });
     expect(useContactsStore.getState().phoneLookupResult?.display_name).toBe("Trần B");
     expect(useContactsStore.getState().phoneLookupLoading).toBe(false);
+  });
+
+  it("useMediaCacheStore evicts least-recently-used entries when exceeding maxEntries (INV-FE-3)", () => {
+    const media = useMediaCacheStore.getState();
+    media.resetMediaCache();
+    media.setMaxEntries(2);
+
+    media.putMedia("k1", "data:image/png;base64,1");
+    media.putMedia("k2", "data:image/png;base64,2");
+    // Touch k1 again so k2 becomes the least-recently-used key.
+    media.putMedia("k1", "data:image/png;base64,1-updated");
+    media.putMedia("k3", "data:image/png;base64,3");
+
+    const state = useMediaCacheStore.getState();
+    expect(state.mediaCache.k2).toBeUndefined();
+    expect(state.mediaCache.k1).toBe("data:image/png;base64,1-updated");
+    expect(state.mediaCache.k3).toBe("data:image/png;base64,3");
+    expect(state.mediaOrder).toEqual(["k1", "k3"]);
   });
 });

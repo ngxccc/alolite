@@ -15,15 +15,18 @@ export interface AuthState {
   qrScannedAvatar: string | null;
   loginInProgress: boolean;
   loginError: string;
+  captchaToken: string | null;
+  captchaImg: string | null;
   savedAccounts: AccountProfile[];
 
   // Actions
   setBootstrapped: (bootstrapped: boolean, appVersion?: string) => void;
   setLoggedIn: (profile: { uin: string; displayName: string; avatar?: string | null }) => void;
   setLoggedOut: () => void;
-  setQrReady: (qrDataUrl: string) => void;
+  setQrReady: (qrDataUrl: string | null) => void;
   setQrScanned: (name?: string | null, avatar?: string | null) => void;
-  setQrExpired: () => void;
+  setQrExpired: (message?: string) => void;
+  setCaptcha: (token: string | null, img: string | null) => void;
   setLoginProgress: (inProgress: boolean, error?: string) => void;
   setSavedAccounts: (accounts: AccountProfile[]) => void;
   deleteSavedAccount: (uin: string) => void;
@@ -43,6 +46,8 @@ export const useAuthStore = create<AuthState>()(
     qrScannedAvatar: null,
     loginInProgress: false,
     loginError: "",
+    captchaToken: null,
+    captchaImg: null,
     savedAccounts: [],
 
     setBootstrapped: (bootstrapped, appVersion) =>
@@ -59,6 +64,8 @@ export const useAuthStore = create<AuthState>()(
         state.avatar = profile.avatar ?? null;
         state.loginInProgress = false;
         state.loginError = "";
+        state.captchaToken = null;
+        state.captchaImg = null;
         state.qrDataUrl = null;
         state.qrScannedName = null;
         state.qrScannedAvatar = null;
@@ -72,28 +79,46 @@ export const useAuthStore = create<AuthState>()(
         state.avatar = null;
         state.loginInProgress = false;
         state.loginError = "";
+        state.captchaToken = null;
+        state.captchaImg = null;
         state.qrDataUrl = null;
+        state.qrScannedName = null;
+        state.qrScannedAvatar = null;
+        state.qrStatus = "Đang xin mã QR mới…";
       }),
 
     setQrReady: (qrDataUrl) =>
       set((state) => {
         state.qrDataUrl = qrDataUrl;
-        state.qrStatus = "Vui lòng dùng Zalo trên điện thoại để quét mã QR";
+        state.qrStatus = "Mở Zalo trên điện thoại và quét mã QR để đăng nhập";
+        state.qrScannedName = null;
+        state.qrScannedAvatar = null;
         state.loginInProgress = false;
         state.loginError = "";
       }),
 
     setQrScanned: (name, avatar) =>
       set((state) => {
-        state.qrStatus = "Đã quét mã QR. Vui lòng xác nhận trên điện thoại";
         state.qrScannedName = name ?? null;
         state.qrScannedAvatar = avatar ?? null;
+        state.qrStatus = name
+          ? `Đã quét (${name}) — Vui lòng xác nhận đăng nhập trên điện thoại`
+          : "Đã quét mã QR. Vui lòng xác nhận trên điện thoại";
       }),
 
-    setQrExpired: () =>
+    setQrExpired: (message) =>
       set((state) => {
-        state.qrStatus = "Mã QR đã hết hạn. Đang tạo mã mới...";
+        state.qrStatus = message ?? "Mã QR đã hết hạn. Đang tạo mã mới...";
         state.qrDataUrl = null;
+        state.qrScannedName = null;
+      }),
+
+    setCaptcha: (token, img) =>
+      set((state) => {
+        state.loginInProgress = false;
+        state.loginError = "";
+        state.captchaToken = token;
+        state.captchaImg = img;
       }),
 
     setLoginProgress: (inProgress, error = "") =>
