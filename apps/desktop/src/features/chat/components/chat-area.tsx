@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
 import { cn } from "cn";
@@ -25,7 +25,6 @@ export function ChatArea() {
   const inChatSearchOpen = useUIStore((s) => s.inChatSearchOpen);
   const inChatSearchQuery = useUIStore((s) => s.inChatSearchQuery);
   const friendStatusByUid = useContactsStore((s) => s.friendStatusByUid);
-  const [reactPickerFor, setReactPickerFor] = useState<string | null>(null);
   const hydratedThreadIdsRef = useRef<Set<string>>(new Set());
 
   const thread: Thread | undefined = threads.find((t) => t.id === selectedThreadId);
@@ -133,13 +132,10 @@ export function ChatArea() {
               {/* Message row */}
               <MessageBubble
                 msg={msg}
-                msgKey={msgKey}
                 thread={thread}
                 isGroupedWithPrev={isGroupedWithPrev}
                 highlighted={highlighted}
                 senderInfo={senderInfo}
-                reactPickerFor={reactPickerFor}
-                setReactPickerFor={setReactPickerFor}
                 jumpToQuoted={jumpToQuoted}
                 resolveReplySenderName={resolveReplySenderName}
                 setRef={(el) => {

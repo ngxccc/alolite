@@ -5,22 +5,25 @@ import { Button, type ButtonProps } from "@/shared/ui/button";
 import { cn } from "cn";
 
 // ── ChatBubble ───────────────────────────────────────────────
-const chatBubbleVariant = cva("group relative flex max-w-[76%] items-end gap-2 transition-colors", {
-  variants: {
-    variant: {
-      received: "self-start",
-      sent: "flex-row-reverse self-end",
+const chatBubbleVariant = cva(
+  "group relative flex max-w-[76%] items-start gap-2.5 transition-colors",
+  {
+    variants: {
+      variant: {
+        received: "self-start",
+        sent: "flex-row-reverse self-end",
+      },
+      layout: {
+        default: "",
+        ai: "w-full max-w-full items-center",
+      },
     },
-    layout: {
-      default: "",
-      ai: "w-full max-w-full items-center",
+    defaultVariants: {
+      variant: "received",
+      layout: "default",
     },
   },
-  defaultVariants: {
-    variant: "received",
-    layout: "default",
-  },
-});
+);
 
 export interface ChatBubbleProps
   extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof chatBubbleVariant> {}
@@ -65,7 +68,7 @@ export const ChatBubbleAvatar: React.FC<ChatBubbleAvatarProps> = ({
     avatarUrl={avatarUrl}
     size={size}
     mediaCache={mediaCache}
-    className={cn("mb-1 shrink-0", className)}
+    className={cn("mt-0.5 shrink-0", className)}
   />
 );
 

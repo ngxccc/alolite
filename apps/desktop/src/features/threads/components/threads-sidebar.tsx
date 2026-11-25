@@ -18,7 +18,6 @@ import {
 import { ipc } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
 import { UserAvatar } from "@/shared/ui/user-avatar";
-import { Badge } from "@/shared/ui/badge";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -58,6 +57,7 @@ export function ThreadsSidebar() {
   const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
   const setPhoneLookupLoading = useContactsStore((s) => s.setPhoneLookupLoading);
   const setPhoneLookupError = useContactsStore((s) => s.setPhoneLookupError);
+  const userOnlineMap = useContactsStore((s) => s.userOnlineMap);
 
   const listRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -103,7 +103,7 @@ export function ThreadsSidebar() {
   const virtualizer = useVirtualizer({
     count: visibleThreads.length,
     getScrollElement: () => listRef.current,
-    estimateSize: () => 70,
+    estimateSize: () => 58,
     overscan: 8,
   });
   const handleSearchKeyDown = (key: string) => {
@@ -318,6 +318,7 @@ export function ThreadsSidebar() {
               const pinned = t.presentation.pinned || pinnedSet.has(t.id);
               const unread = threadUnreadCount(t, unreadCounts);
               const hasDot = unread > 0 || t.unread.marked_unread;
+              const isOnline = !t.is_group && Boolean(userOnlineMap[t.id]?.[0]);
 
               return (
                 <ContextMenu key={t.id}>
@@ -338,37 +339,47 @@ export function ThreadsSidebar() {
                           }
                         }}
                         className={cn(
-                          "absolute inset-x-2 top-0 flex cursor-pointer items-center gap-3 rounded-[6px] px-2 transition-colors select-none",
-                          selected
-                            ? "bg-accent text-foreground"
-                            : "hover:bg-foreground/5 dark:hover:bg-[rgba(255,255,255,0.05)]",
+                          "absolute inset-x-2 top-0 flex cursor-pointer items-center gap-3 rounded-md px-2.5 transition-colors select-none",
+                          selected ? "bg-muted text-foreground" : "hover:bg-muted/60",
                         )}
                       />
                     }
                   >
-                    <UserAvatar
-                      id={t.id}
-                      name={t.name}
-                      avatarUrl={t.avatar}
-                      isGroup={t.is_group}
-                      memberCount={t.is_group ? threadMemberCount(t) : undefined}
-                      size={48}
-                      mediaCache={mediaCache}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <div className="flex items-center justify-between gap-1">
+                    <div className="relative shrink-0">
+                      <UserAvatar
+                        id={t.id}
+                        name={t.name}
+                        avatarUrl={t.avatar}
+                        isGroup={t.is_group}
+                        memberCount={t.is_group ? threadMemberCount(t) : undefined}
+                        size={36}
+                        mediaCache={mediaCache}
+                      />
+                      {isOnline ? (
+                        <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full bg-online ring-2 ring-sidebar" />
+                      ) : null}
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <div className="flex items-center justify-between gap-2">
                         <span
                           className={cn(
-                            "truncate text-base text-foreground",
-                            hasDot ? "font-semibold" : "font-normal",
+                            "truncate text-sm text-foreground",
+                            selected || hasDot ? "font-semibold" : "font-medium",
                           )}
                         >
                           {t.name || t.id}
                         </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">{t.time}</span>
+                        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                          {t.time}
+                        </span>
                       </div>
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="truncate text-sm text-muted-foreground">
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={cn(
+                            "truncate text-xs",
+                            hasDot ? "font-medium text-foreground" : "text-muted-foreground",
+                          )}
+                        >
                           {t.presentation.last_outgoing &&
                           !t.preview.startsWith("Bạn:") &&
                           !t.preview.startsWith("You:")
@@ -381,15 +392,9 @@ export function ThreadsSidebar() {
                           {pinned ? <Pin className="h-3 w-3 text-muted-foreground" /> : null}
                           {muted ? <BellOff className="h-3 w-3 text-muted-foreground" /> : null}
                           {unread > 0 ? (
-                            <Badge
-                              variant="destructive"
-                              className={cn(
-                                "h-4 rounded-full text-xs leading-none font-bold",
-                                unread > 9 ? "min-w-4 px-1" : "w-4 p-0",
-                              )}
-                            >
+                            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tabular-nums">
                               {unread > 99 ? "99+" : unread}
-                            </Badge>
+                            </span>
                           ) : t.unread.marked_unread ? (
                             <span className="h-2 w-2 rounded-full bg-primary" />
                           ) : null}
