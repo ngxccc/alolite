@@ -29,13 +29,10 @@ import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { cn } from "@/shared/utils/cn";
 import { extractFirstUrl } from "@/shared/utils/text";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
 import { stickerThumbnailUrl } from "@/features/chat/utils/messages";
+import { useChatStore, useMediaCacheStore } from "@/stores";
 
 interface ComposerProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
   thread: Thread;
 }
 type StickerTabId = "popular" | "onion" | "search" | "store" | number;
@@ -62,10 +59,21 @@ function StickerThumb({ item, onPick }: { item: StickerItem; onPick: () => void 
   );
 }
 
-export function Composer({ state: propState, dispatch: propDispatch, thread }: ComposerProps) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function Composer({ thread }: ComposerProps) {
+  const settings = useChatStore((s) => s.settings);
+  const replyingTo = useChatStore((s) => s.replyingTo);
+  const setReplyingTo = useChatStore((s) => s.setReplyingTo);
+  const pinnedPacks = useChatStore((s) => s.pinnedPacks);
+  const linkMetadataCache = useMediaCacheStore((s) => s.linkMetadataCache);
+  const popularStickers = useMediaCacheStore((s) => s.popularStickers);
+  const onionStickers = useMediaCacheStore((s) => s.onionStickers);
+  const stickerSearchResults = useMediaCacheStore((s) => s.stickerSearchResults);
+  const stickerPackItems = useMediaCacheStore((s) => s.stickerPackItems);
+  const composerStickerSuggestions = useMediaCacheStore((s) => s.composerStickerSuggestions);
+  const stickerStoreLoading = useMediaCacheStore((s) => s.stickerStoreLoading);
+  const stickerStorePacks = useMediaCacheStore((s) => s.stickerStorePacks);
+  const setStickerStoreLoading = useMediaCacheStore((s) => s.setStickerStoreLoading);
+  const setStickerSearchLoading = useMediaCacheStore((s) => s.setStickerSearchLoading);
   const [text, setText] = useState("");
   const [stickerOpen, setStickerOpen] = useState(false);
   const [stickerTab, setStickerTab] = useState<StickerTabId>("popular");
@@ -86,32 +94,32 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
       ("is_locked" in thread && Boolean(thread.is_locked)));
   const firstUrl = extractFirstUrl(text);
   const linkPreview =
-    firstUrl && firstUrl !== dismissedLinkFor ? state.linkMetadataCache[firstUrl] : undefined;
+    firstUrl && firstUrl !== dismissedLinkFor ? linkMetadataCache[firstUrl] : undefined;
 
   useEffect(() => {
-    if (!firstUrl || state.linkMetadataCache[firstUrl] || !isTauriRuntime()) return;
+    if (!firstUrl || linkMetadataCache[firstUrl] || !isTauriRuntime()) return;
     const t = window.setTimeout(() => {
       void ipc.parseLinkPreview(firstUrl);
     }, 220);
     return () => window.clearTimeout(t);
-  }, [firstUrl, state.linkMetadataCache]);
+  }, [firstUrl, linkMetadataCache]);
 
   useEffect(() => {
-    if (!state.settings?.suggest_stickers_while_typing || !isTauriRuntime()) return;
+    if (!settings?.suggest_stickers_while_typing || !isTauriRuntime()) return;
     const trimmed = text.trim();
     if (trimmed.length < 2 || trimmed.length > 24 || trimmed.includes("http")) return;
     const t = window.setTimeout(() => {
       void ipc.suggestComposerStickers(trimmed);
     }, 260);
     return () => window.clearTimeout(t);
-  }, [text, state.settings?.suggest_stickers_while_typing]);
+  }, [text, settings?.suggest_stickers_while_typing]);
 
   useEffect(() => {
-    if (stickerTab === "store" && state.stickerStorePacks.length === 0 && isTauriRuntime()) {
-      dispatch({ type: "SET_STICKER_STORE_LOADING", loading: true });
+    if (stickerTab === "store" && stickerStorePacks.length === 0 && isTauriRuntime()) {
+      setStickerStoreLoading(true);
       void ipc.fetchStickerStore();
     }
-  }, [stickerTab, state.stickerStorePacks.length, dispatch]);
+  }, [stickerTab, stickerStorePacks.length, setStickerStoreLoading]);
 
   const sendNow = async () => {
     if (pendingUpload) {
@@ -124,9 +132,9 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
     const clean = text.trim();
     if (!clean) return;
     setText("");
-    if (state.replyingTo) {
-      const quoted = state.replyingTo;
-      dispatch({ type: "SET_REPLYING_TO", msg: null });
+    if (replyingTo) {
+      const quoted = replyingTo;
+      setReplyingTo(null);
       await ipc.sendQuote(thread.id, clean, quoted, thread.is_group);
     } else {
       await ipc.sendMessage(thread.id, clean, thread.is_group);
@@ -134,7 +142,7 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    const cmdEnterOnly = state.settings?.send_message_key === "cmd_enter";
+    const cmdEnterOnly = settings?.send_message_key === "cmd_enter";
     if (e.key === "Enter") {
       if (cmdEnterOnly && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -148,7 +156,7 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
 
   const handleTextChange = (val: string) => {
     setText(val);
-    if (state.settings?.show_typing_indicator && !state.settings.block_typing && isTauriRuntime()) {
+    if (settings?.show_typing_indicator && !settings.block_typing && isTauriRuntime()) {
       const now = Date.now();
       if (now - lastTypingAt.current > 3500 && val.trim().length > 0) {
         lastTypingAt.current = now;
@@ -201,13 +209,13 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
 
   const displayedStickers: StickerItem[] =
     stickerTab === "popular"
-      ? state.popularStickers
+      ? popularStickers
       : stickerTab === "onion"
-        ? state.onionStickers
+        ? onionStickers
         : stickerTab === "search"
-          ? state.stickerSearchResults
+          ? stickerSearchResults
           : typeof stickerTab === "number"
-            ? (state.stickerPackItems[stickerTab] ?? [])
+            ? (stickerPackItems[stickerTab] ?? [])
             : [];
 
   // Locked-group notice bar at the bottom
@@ -231,9 +239,9 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
       className="relative flex shrink-0 flex-col border-t border-border bg-sidebar px-4 py-1.5 dark:border-[rgba(255,255,255,0.1)]"
     >
       {/* Sticker typing suggestions */}
-      {state.composerStickerSuggestions.length > 0 && text.trim().length >= 2 ? (
+      {composerStickerSuggestions.length > 0 && text.trim().length >= 2 ? (
         <div className="flex gap-1.5 overflow-x-auto pb-1">
-          {state.composerStickerSuggestions.slice(0, 8).map((item) => (
+          {composerStickerSuggestions.slice(0, 8).map((item) => (
             <div key={`sug_${item.cate_id}_${item.sticker_id}`} className="w-16 shrink-0">
               <StickerThumb
                 item={item}
@@ -271,20 +279,16 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
       ) : null}
 
       {/* Replying-to bar */}
-      {state.replyingTo ? (
+      {replyingTo ? (
         <div className="mb-1 flex items-center justify-between rounded-md border-l-[3px] border-primary bg-muted/60 px-2.5 py-1.5 text-xs">
           <div className="flex min-w-0 items-center gap-2">
             <CornerUpLeft className="h-3.5 w-3.5 shrink-0 text-primary" />
             <div className="min-w-0">
-              <div className="font-bold text-foreground">Trả lời {state.replyingTo.sender}</div>
-              <div className="truncate text-muted-foreground">{state.replyingTo.text}</div>
+              <div className="font-bold text-foreground">Trả lời {replyingTo.sender}</div>
+              <div className="truncate text-muted-foreground">{replyingTo.text}</div>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => dispatch({ type: "SET_REPLYING_TO", msg: null })}
-          >
+          <Button variant="ghost" size="icon-sm" onClick={() => setReplyingTo(null)}>
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -333,7 +337,7 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
               {[
                 { id: "popular" as const, label: "Phổ biến" },
                 { id: "onion" as const, label: "Củ hành" },
-                ...state.pinnedPacks.map((p) => ({
+                ...pinnedPacks.map((p) => ({
                   id: p.cate_id,
                   label: p.name,
                 })),
@@ -363,10 +367,7 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
                   onChange={(e) => setStickerQuery(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && stickerQuery.trim()) {
-                      dispatch({
-                        type: "SET_STICKER_SEARCH_LOADING",
-                        loading: true,
-                      });
+                      setStickerSearchLoading(true);
                       void ipc.searchStickers(stickerQuery.trim());
                     }
                   }}
@@ -376,10 +377,7 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
                   variant="default"
                   onClick={() => {
                     if (!stickerQuery.trim()) return;
-                    dispatch({
-                      type: "SET_STICKER_SEARCH_LOADING",
-                      loading: true,
-                    });
+                    setStickerSearchLoading(true);
                     void ipc.searchStickers(stickerQuery.trim());
                   }}
                 >
@@ -390,19 +388,19 @@ export function Composer({ state: propState, dispatch: propDispatch, thread }: C
 
             {stickerTab === "store" ? (
               <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2.5">
-                {state.stickerStoreLoading ? (
+                {stickerStoreLoading ? (
                   <div className="p-5 text-center text-xs text-muted-foreground">
                     Đang tải kho nhãn dán…
                   </div>
                 ) : (
-                  state.stickerStorePacks.map((pack) => (
+                  stickerStorePacks.map((pack) => (
                     <Button
                       key={pack.id}
                       variant="outline"
                       className="w-full justify-between"
                       onClick={() => {
                         setStickerTab(pack.id);
-                        if (!state.stickerPackItems[pack.id]) {
+                        if (!stickerPackItems[pack.id]) {
                           void ipc.fetchStickerPack(pack.id, pack.name);
                         }
                       }}

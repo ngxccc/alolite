@@ -2,28 +2,16 @@ import { Trash2 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Button } from "@/shared/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/shared/ui/dialog";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useUIStore } from "@/stores";
 
-interface WipeConfirmModalProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
+export function WipeConfirmModal() {
+  const wipeConfirmOpen = useUIStore((s) => s.wipeConfirmOpen);
+  const setWipeConfirmOpen = useUIStore((s) => s.setWipeConfirmOpen);
 
-export function WipeConfirmModal({
-  state: propState,
-  dispatch: propDispatch,
-}: WipeConfirmModalProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
-  if (!state.wipeConfirmOpen) return null;
+  if (!wipeConfirmOpen) return null;
 
   return (
-    <Dialog
-      open={state.wipeConfirmOpen}
-      onOpenChange={(open) => !open && dispatch({ type: "SET_WIPE_CONFIRM", open: false })}
-    >
+    <Dialog open={wipeConfirmOpen} onOpenChange={(open) => !open && setWipeConfirmOpen(false)}>
       <DialogContent className="w-[400px] max-w-[400px] rounded-lg p-0">
         {/* Header */}
         <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
@@ -55,7 +43,7 @@ export function WipeConfirmModal({
           <Button
             variant="secondary"
             className="h-8 rounded-md px-4 text-sm"
-            onClick={() => dispatch({ type: "SET_WIPE_CONFIRM", open: false })}
+            onClick={() => setWipeConfirmOpen(false)}
           >
             Hủy
           </Button>
@@ -63,7 +51,7 @@ export function WipeConfirmModal({
             variant="destructive"
             className="h-8 rounded-md px-4 text-sm"
             onClick={() => {
-              dispatch({ type: "SET_WIPE_CONFIRM", open: false });
+              setWipeConfirmOpen(false);
               void ipc.wipeLocalData();
             }}
           >

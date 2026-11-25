@@ -14,14 +14,14 @@ import { ipc } from "@/shared/api/ipc";
 import { Avatar } from "@/shared/ui/avatar";
 import { cn } from "@/shared/utils/cn";
 import { foldVnSearch, matchesVnQuery } from "@/shared/utils/text";
-import type { AppAction, AppState, ContactsSubTab } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
 import type { Thread } from "@/shared/types/ipc.generated";
-
-interface ContactsViewProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
+import {
+  useChatStore,
+  useContactsStore,
+  useMediaCacheStore,
+  useUIStore,
+  type ContactsSubTab,
+} from "@/stores";
 
 // Nav items in the left column
 const CONTACT_TABS: {
@@ -61,11 +61,24 @@ function groupLetter(name: string): string {
   return /[A-Z]/.test(firstChar) ? firstChar : "#";
 }
 
-export function ContactsView({ state: propState, dispatch: propDispatch }: ContactsViewProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
-  const sub = state.contactsSubTab;
+export function ContactsView() {
+  const sub = useContactsStore((s) => s.contactsSubTab);
+  const contactsSearchQuery = useContactsStore((s) => s.contactsSearchQuery);
+  const friendStatusMap = useContactsStore((s) => s.friendStatusByUid);
+  const setContactsSubTab = useContactsStore((s) => s.setContactsSubTab);
+  const setContactsSearchQuery = useContactsStore((s) => s.setContactsSearchQuery);
+  const threads = useChatStore((s) => s.threads);
+  const selectThread = useChatStore((s) => s.selectThread);
+  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
+  const setActiveSection = useUIStore((s) => s.setActiveSection);
+  const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+
+  const openThread = (threadId: string) => {
+    setActiveSection("chat");
+    setInChatSearchOpen(false);
+    selectThread(threadId);
+  };
 
   // Per-tab search query (local state)
   const [localSearch, setLocalSearch] = useState("");
@@ -75,9 +88,9 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
   const sortKey: SortKey = userSortKey ?? (sub === "groups" ? "recent" : "name_asc");
 
   // Build items list based on the active sub-tab
-  const rawItems = state.threads.filter((t) => {
+  const rawItems = threads.filter((t) => {
     if (sub === "friend_requests") {
-      return !t.is_group && state.friendStatusMap[t.id] === "IncomingPending";
+      return !t.is_group && friendStatusMap[t.id] === "IncomingPending";
     }
     if (sub === "group_invites") {
       // group_invites come from a separate IPC source; always empty here
@@ -90,12 +103,12 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
     return (
       !t.is_group &&
       !t.name.includes("Cloud của tôi") &&
-      state.friendStatusMap[t.id] !== "IncomingPending"
+      friendStatusMap[t.id] !== "IncomingPending"
     );
   });
 
   // Apply search filter (from local search input or left sidebar search input)
-  const searchQuery = (localSearch || state.contactsSearchQuery).trim();
+  const searchQuery = (localSearch || contactsSearchQuery).trim();
   const searched = searchQuery
     ? rawItems.filter((t) => matchesVnQuery(t.name, searchQuery))
     : rawItems;
@@ -124,8 +137,8 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
           <div className="flex h-8 w-[240px] shrink-0 items-center gap-1.5 rounded-[5px] bg-canvas px-2.5">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <input
-              value={state.contactsSearchQuery}
-              onChange={(e) => dispatch({ type: "SET_CONTACTS_SEARCH", query: e.target.value })}
+              value={contactsSearchQuery}
+              onChange={(e) => setContactsSearchQuery(e.target.value)}
               placeholder="Tìm kiếm"
               className="min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
@@ -134,7 +147,7 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
           <button
             type="button"
             title="Thêm bạn"
-            onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: true })}
+            onClick={() => setPhoneLookupOpen(true)}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
           >
             <UserPlus className="h-5 w-5" />
@@ -159,7 +172,7 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
                 key={tab.id}
                 type="button"
                 onClick={() => {
-                  dispatch({ type: "SET_CONTACTS_SUBTAB", tab: tab.id });
+                  setContactsSubTab(tab.id);
                   setLocalSearch("");
                   setUserSortKey(null);
                 }}
@@ -194,19 +207,19 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
           {sub === "group_invites" ? (
             <GroupInvitesEmpty />
           ) : sub === "friend_requests" ? (
-            <FriendRequestsPanel items={sorted} state={state} dispatch={dispatch} />
+            <FriendRequestsPanel items={sorted} mediaCache={mediaCache} />
           ) : (
             <ContactListPanel
               sub={sub}
               items={sorted}
-              state={state}
+              mediaCache={mediaCache}
               localSearch={localSearch}
               onSearch={setLocalSearch}
               sortKey={sortKey}
               onSort={setUserSortKey}
               filterVal={filterVal}
               onFilter={setFilterVal}
-              dispatch={dispatch}
+              onSelectThread={openThread}
             />
           )}
         </div>
@@ -220,25 +233,25 @@ export function ContactsView({ state: propState, dispatch: propDispatch }: Conta
 interface ContactListPanelProps {
   sub: ContactsSubTab;
   items: Thread[];
-  state: AppState;
+  mediaCache: Record<string, string | undefined>;
   localSearch: string;
   onSearch: (q: string) => void;
   sortKey: SortKey;
   onSort: (k: SortKey) => void;
   filterVal: string;
   onFilter: (v: string) => void;
-  dispatch: (action: AppAction) => void;
+  onSelectThread: (threadId: string) => void;
 }
 
 function ContactListPanel({
   sub,
   items,
-  state,
+  mediaCache,
   localSearch,
   onSearch,
   sortKey,
   onSort,
-  dispatch,
+  onSelectThread,
 }: ContactListPanelProps) {
   const isGroups = sub === "groups";
   const captionLabel = TAB_CAPTION[sub];
@@ -325,14 +338,26 @@ function ContactListPanel({
           </div>
         ) : isGroups ? (
           // Groups: flat list, no letter headings
-          items.map((t) => <GroupRow key={t.id} thread={t} state={state} dispatch={dispatch} />)
+          items.map((t) => (
+            <GroupRow
+              key={t.id}
+              thread={t}
+              mediaCache={mediaCache}
+              onSelectThread={onSelectThread}
+            />
+          ))
         ) : (
           // Friends: alphabetical sections
           sections.map(({ letter, rows }) => (
             <div key={letter}>
               <div className="px-4 pt-3 pb-1 text-base font-medium text-foreground">{letter}</div>
               {rows.map((t) => (
-                <FriendRow key={t.id} thread={t} state={state} dispatch={dispatch} />
+                <FriendRow
+                  key={t.id}
+                  thread={t}
+                  mediaCache={mediaCache}
+                  onSelectThread={onSelectThread}
+                />
               ))}
             </div>
           ))
@@ -346,14 +371,14 @@ function ContactListPanel({
 
 interface RowProps {
   thread: Thread;
-  state: AppState;
-  dispatch: (action: AppAction) => void;
+  mediaCache: Record<string, string | undefined>;
+  onSelectThread: (threadId: string) => void;
 }
 
-function FriendRow({ thread, state, dispatch }: RowProps) {
+function FriendRow({ thread, mediaCache, onSelectThread }: RowProps) {
   return (
     <div
-      onClick={() => dispatch({ type: "SELECT_THREAD", threadId: thread.id })}
+      onClick={() => onSelectThread(thread.id)}
       className="group flex h-14 cursor-pointer items-center gap-3 px-4 hover:bg-foreground/5"
     >
       <Avatar
@@ -362,7 +387,7 @@ function FriendRow({ thread, state, dispatch }: RowProps) {
         avatarUrl={thread.avatar}
         isGroup={false}
         size={40}
-        mediaCache={state.mediaCache}
+        mediaCache={mediaCache}
       />
       <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
         {thread.name}
@@ -379,11 +404,11 @@ function FriendRow({ thread, state, dispatch }: RowProps) {
   );
 }
 
-function GroupRow({ thread, state, dispatch }: RowProps) {
+function GroupRow({ thread, mediaCache, onSelectThread }: RowProps) {
   const memberCount = thread.presentation.member_count;
   return (
     <div
-      onClick={() => dispatch({ type: "SELECT_THREAD", threadId: thread.id })}
+      onClick={() => onSelectThread(thread.id)}
       className="group flex h-[60px] cursor-pointer items-center gap-3 px-4 hover:bg-foreground/5"
     >
       <Avatar
@@ -393,7 +418,7 @@ function GroupRow({ thread, state, dispatch }: RowProps) {
         isGroup
         memberCount={memberCount ?? undefined}
         size={40}
-        mediaCache={state.mediaCache}
+        mediaCache={mediaCache}
       />
       <div className="min-w-0 flex-1">
         <div className="truncate text-base font-medium text-foreground">{thread.name}</div>
@@ -416,11 +441,10 @@ function GroupRow({ thread, state, dispatch }: RowProps) {
 
 interface FriendRequestsPanelProps {
   items: Thread[];
-  state: AppState;
-  dispatch: (action: AppAction) => void;
+  mediaCache: Record<string, string | undefined>;
 }
 
-function FriendRequestsPanel({ items, state }: FriendRequestsPanelProps) {
+function FriendRequestsPanel({ items, mediaCache }: FriendRequestsPanelProps) {
   return (
     <>
       <div className="mb-3 text-sm font-medium text-foreground">
@@ -433,7 +457,7 @@ function FriendRequestsPanel({ items, state }: FriendRequestsPanelProps) {
       ) : (
         <div className="flex flex-col gap-3">
           {items.map((t) => (
-            <FriendRequestCard key={t.id} thread={t} state={state} />
+            <FriendRequestCard key={t.id} thread={t} mediaCache={mediaCache} />
           ))}
         </div>
       )}
@@ -443,10 +467,10 @@ function FriendRequestsPanel({ items, state }: FriendRequestsPanelProps) {
 
 interface FriendRequestCardProps {
   thread: Thread;
-  state: AppState;
+  mediaCache: Record<string, string | undefined>;
 }
 
-function FriendRequestCard({ thread, state }: FriendRequestCardProps) {
+function FriendRequestCard({ thread, mediaCache }: FriendRequestCardProps) {
   return (
     <div className="w-[397px] rounded-lg bg-card p-3">
       {/* Top row: avatar + name + time + icon */}
@@ -457,7 +481,7 @@ function FriendRequestCard({ thread, state }: FriendRequestCardProps) {
           avatarUrl={thread.avatar}
           isGroup={false}
           size={40}
-          mediaCache={state.mediaCache}
+          mediaCache={mediaCache}
         />
         <div className="min-w-0 flex-1">
           <div className="text-base font-medium text-foreground">{thread.name}</div>

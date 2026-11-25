@@ -15,13 +15,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { TooltipProvider } from "@/shared/ui/tooltip";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
-
-interface LoginViewProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
+import { useAuthStore, useUIStore } from "@/stores";
 
 function formatAuthErrorMessage(error: string): { title: string; detail: string } {
   const raw = error.trim();
@@ -65,10 +59,19 @@ function formatAuthErrorMessage(error: string): { title: string; detail: string 
   };
 }
 
-export function LoginView({ state: propState, dispatch: propDispatch }: LoginViewProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function LoginView() {
+  const appVersion = useAuthStore((s) => s.appVersion);
+  const loginInProgress = useAuthStore((s) => s.loginInProgress);
+  const loginError = useAuthStore((s) => s.loginError);
+  const captchaToken = useAuthStore((s) => s.captchaToken);
+  const captchaImg = useAuthStore((s) => s.captchaImg);
+  const qrDataUrl = useAuthStore((s) => s.qrDataUrl);
+  const qrScannedName = useAuthStore((s) => s.qrScannedName);
+  const qrScannedAvatar = useAuthStore((s) => s.qrScannedAvatar);
+  const savedAccounts = useAuthStore((s) => s.savedAccounts);
+  const setLoginProgress = useAuthStore((s) => s.setLoginProgress);
+  const appLogoDataUrl = useUIStore((s) => s.appLogoDataUrl);
+  const setStatusMessage = useUIStore((s) => s.setStatusMessage);
 
   const [tab, setTab] = useState<"qr" | "password">("qr");
   const [phone, setPhone] = useState("");
@@ -78,7 +81,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
 
   // Starting a login is an explicit user action: mounting the view must not touch the network.
   const startQr = () => {
-    if (state.loginInProgress) return;
+    if (loginInProgress) return;
     setQrRequested(true);
     void ipc.requestQr();
   };
@@ -86,22 +89,19 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
   const handlePasswordLogin = (e: SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!phone.trim() || !pass) return;
-    if (state.captchaToken && !captchaCode.trim()) return;
-    dispatch({
-      type: "SET_LOGIN_IN_PROGRESS",
-      pending: true,
-      status: "Đang đăng nhập…",
-    });
+    if (captchaToken && !captchaCode.trim()) return;
+    setLoginProgress(true, "");
+    setStatusMessage("Đang đăng nhập…");
     void ipc.loginPassword(
       phone.trim(),
       pass,
-      state.captchaToken ?? undefined,
+      captchaToken ?? undefined,
       captchaCode.trim() ? captchaCode.trim() : undefined,
     );
   };
 
-  const hasQrError = Boolean(state.loginError && tab === "qr" && !state.qrDataUrl);
-  const formattedError = state.loginError ? formatAuthErrorMessage(state.loginError) : null;
+  const hasQrError = Boolean(loginError && tab === "qr" && !qrDataUrl);
+  const formattedError = loginError ? formatAuthErrorMessage(loginError) : null;
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -110,9 +110,9 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
           {/* ── Header ── */}
           <div className="flex items-center justify-between border-b border-border/60 pb-4">
             <div className="flex items-center gap-3">
-              {state.appLogoDataUrl ? (
+              {appLogoDataUrl ? (
                 <img
-                  src={state.appLogoDataUrl}
+                  src={appLogoDataUrl}
                   alt="AloLite"
                   className="h-10 w-10 rounded-xl object-contain shadow-xs"
                 />
@@ -125,7 +125,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                 <div className="flex items-center gap-1.5 leading-none">
                   <span className="text-lg font-bold tracking-tight text-foreground">AloLite</span>
                   <Badge variant="secondary" className="px-1.5 py-0.5 font-mono text-xs">
-                    v{state.appVersion}
+                    v{appVersion}
                   </Badge>
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">Đăng nhập tài khoản Zalo</div>
@@ -141,11 +141,8 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
               // Switching tabs must stay offline: the QR ticket is created only by the
               // explicit buttons below, because the webview focuses the first trigger on
               // mount and would otherwise fire `onValueChange` without any user action.
-              if (state.loginError) {
-                dispatch({
-                  type: "CORE_EVENT",
-                  event: { type: "LoginFailed", payload: { message: "" } },
-                });
+              if (loginError) {
+                setLoginProgress(false, "");
               }
             }}
             className="flex flex-col gap-4"
@@ -164,13 +161,13 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
               {/* Soft Elevated White Plate */}
               <div className="relative flex h-[240px] w-[240px] items-center justify-center overflow-hidden rounded-2xl border border-black/10 bg-white p-3 shadow-md">
                 {/* State A: Phone scanned, awaiting mobile confirmation */}
-                {state.qrScannedName ? (
+                {qrScannedName ? (
                   <div className="animate-in fade-in zoom-in-95 flex flex-col items-center justify-center gap-2.5 p-2 text-center duration-200">
                     <div className="relative">
-                      {state.qrScannedAvatar ? (
+                      {qrScannedAvatar ? (
                         <img
-                          src={state.qrScannedAvatar}
-                          alt={state.qrScannedName}
+                          src={qrScannedAvatar}
+                          alt={qrScannedName}
                           className="h-16 w-16 animate-pulse rounded-full border-2 border-white object-cover shadow-md ring-4 ring-online/30"
                         />
                       ) : (
@@ -184,7 +181,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                     </div>
                     <div>
                       <div className="max-w-[170px] truncate text-xs font-bold text-slate-800">
-                        {state.qrScannedName}
+                        {qrScannedName}
                       </div>
                       <div className="mt-0.5 text-xs font-medium text-online">
                         Đã quét mã thành công
@@ -210,10 +207,10 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                       <RefreshCw className="h-3 w-3" /> Thử lại
                     </Button>
                   </div>
-                ) : state.qrDataUrl ? (
+                ) : qrDataUrl ? (
                   /* State C: QR ready to be scanned */
                   <img
-                    src={state.qrDataUrl}
+                    src={qrDataUrl}
                     alt="Zalo QR"
                     className="h-full w-full object-contain select-none [image-rendering:pixelated]"
                   />
@@ -249,7 +246,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
               </div>
 
               {/* Status explanation below plate */}
-              {state.qrScannedName ? (
+              {qrScannedName ? (
                 <div className="flex items-center gap-1.5 text-center text-xs font-medium text-foreground">
                   <Smartphone className="h-3.5 w-3.5 animate-bounce text-primary" />
                   <span>Hãy bấm &quot;Đăng nhập&quot; trên điện thoại của bạn</span>
@@ -257,11 +254,11 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
               ) : !hasQrError ? (
                 <div className="flex flex-col items-center gap-1 text-center">
                   <div className="text-xs text-muted-foreground">
-                    {state.qrDataUrl
+                    {qrDataUrl
                       ? "Mở ứng dụng Zalo trên điện thoại để quét mã"
                       : "Mã QR chỉ được tạo khi bạn yêu cầu"}
                   </div>
-                  {state.qrDataUrl ? (
+                  {qrDataUrl ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -289,7 +286,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="09xxxxxxxx"
                     autoFocus
-                    disabled={state.loginInProgress}
+                    disabled={loginInProgress}
                     className="h-10 text-sm"
                   />
                 </div>
@@ -304,11 +301,11 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                     value={pass}
                     onChange={(e) => setPass(e.target.value)}
                     placeholder="••••••••"
-                    disabled={state.loginInProgress}
+                    disabled={loginInProgress}
                     className="h-10 text-sm"
                   />
                 </div>
-                {state.captchaImg ? (
+                {captchaImg ? (
                   <div className="flex flex-col gap-2 rounded-lg border border-border/80 bg-muted/30 p-3">
                     <div className="flex items-center justify-between">
                       <label
@@ -323,7 +320,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                         size="sm"
                         className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                         onClick={() => void ipc.refreshCaptcha()}
-                        disabled={state.loginInProgress}
+                        disabled={loginInProgress}
                         title="Đổi mã khác"
                       >
                         <RefreshCw className="h-3.5 w-3.5" />
@@ -334,7 +331,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                     <div className="flex items-center gap-2.5">
                       <div className="flex h-11 w-40 shrink-0 items-center justify-center overflow-hidden rounded border border-border bg-white p-0.5 shadow-xs">
                         <img
-                          src={`data:image/jpeg;base64,${state.captchaImg}`}
+                          src={`data:image/jpeg;base64,${captchaImg}`}
                           alt="Mã xác thực"
                           className="h-full w-full object-contain select-none"
                         />
@@ -350,7 +347,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                         autoCorrect="off"
                         autoCapitalize="off"
                         spellCheck={false}
-                        disabled={state.loginInProgress}
+                        disabled={loginInProgress}
                         maxLength={8}
                         className="h-11 text-center text-base font-medium tracking-wider"
                       />
@@ -358,7 +355,7 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                   </div>
                 ) : null}
 
-                {state.loginError && tab === "password" && formattedError ? (
+                {loginError && tab === "password" && formattedError ? (
                   <div className="flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
                     <AlertCircle className="mt-0.5 h-4.5 w-4.5 shrink-0" />
                     <div>
@@ -373,13 +370,13 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
                   variant="default"
                   className="mt-1 h-10 w-full gap-2 text-sm font-semibold"
                   disabled={
-                    state.loginInProgress ||
+                    loginInProgress ||
                     !phone.trim() ||
                     !pass ||
-                    (Boolean(state.captchaToken) && !captchaCode.trim())
+                    (Boolean(captchaToken) && !captchaCode.trim())
                   }
                 >
-                  {state.loginInProgress ? (
+                  {loginInProgress ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span>Đang xác thực tài khoản…</span>
@@ -393,13 +390,13 @@ export function LoginView({ state: propState, dispatch: propDispatch }: LoginVie
           </Tabs>
 
           {/* ── Saved accounts switcher (macOS Switch User Style) ── */}
-          {state.savedAccounts.length > 0 ? (
+          {savedAccounts.length > 0 ? (
             <div className="border-t border-border/60 pt-3.5">
               <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                 Tài khoản đã lưu trên máy
               </div>
               <div className="flex max-h-[150px] flex-col gap-2 overflow-y-auto pr-0.5">
-                {state.savedAccounts.map((acc) => (
+                {savedAccounts.map((acc) => (
                   <button
                     key={acc.uin}
                     type="button"

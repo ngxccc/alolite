@@ -36,34 +36,30 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils/cn";
 import { matchesVnQuery } from "@/shared/utils/text";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
-import { useChatStore } from "@/stores/use-chat-store";
+import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import {
   isThreadMuted,
   threadMemberCount,
   threadUnreadCount,
 } from "@/features/threads/utils/threads";
 
-interface ThreadsSidebarProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
-export function ThreadsSidebar({
-  state: propState,
-  dispatch: propDispatch,
-}: ThreadsSidebarProps = {}) {
-  const chat = useChatStore();
-  const appStore = useAppStore();
-  const dispatch = propDispatch ?? appStore.dispatch;
-
-  const threads = propState?.threads ?? chat.threads;
-  const selectedThreadId = propState?.selectedThreadId ?? chat.selectedThreadId;
-  const threadFilter = propState?.threadFilter ?? chat.threadFilter;
-  const searchQuery = propState?.searchQuery ?? chat.searchQuery;
-  const unreadCounts = propState?.unreadCounts ?? chat.unreadCounts;
-  const settings = propState?.settings ?? chat.settings;
-  const mediaCache = propState?.mediaCache ?? appStore.mediaCache;
+export function ThreadsSidebar() {
+  const threads = useChatStore((s) => s.threads);
+  const selectedThreadId = useChatStore((s) => s.selectedThreadId);
+  const threadFilter = useChatStore((s) => s.threadFilter);
+  const searchQuery = useChatStore((s) => s.searchQuery);
+  const unreadCounts = useChatStore((s) => s.unreadCounts);
+  const settings = useChatStore((s) => s.settings);
+  const selectThread = useChatStore((s) => s.selectThread);
+  const setThreadFilter = useChatStore((s) => s.setThreadFilter);
+  const setSearchQuery = useChatStore((s) => s.setSearchQuery);
+  const setSettings = useChatStore((s) => s.setSettings);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
+  const setActiveSection = useUIStore((s) => s.setActiveSection);
+  const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
+  const setPhoneLookupLoading = useContactsStore((s) => s.setPhoneLookupLoading);
+  const setPhoneLookupError = useContactsStore((s) => s.setPhoneLookupError);
 
   const listRef = useRef<HTMLDivElement>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -97,8 +93,9 @@ export function ThreadsSidebar({
     if (key !== "Enter") return;
     const digits = searchQuery.replace(/\D/g, "");
     if (digits.length >= 8) {
-      dispatch({ type: "SET_PHONE_MODAL", open: true });
-      dispatch({ type: "START_PHONE_LOOKUP" });
+      setPhoneLookupOpen(true);
+      setPhoneLookupError(null);
+      setPhoneLookupLoading(true);
       void ipc.lookupPhone(searchQuery.trim());
     }
   };
@@ -110,7 +107,7 @@ export function ThreadsSidebar({
       ? settings.pinned_threads.filter((id) => id !== thread.id)
       : [...settings.pinned_threads, thread.id];
     const nextSettings = { ...settings, pinned_threads: nextPinned };
-    dispatch({ type: "UPDATE_SETTINGS_LOCAL", settings: nextSettings });
+    setSettings(nextSettings);
     void ipc.saveSettings(nextSettings);
     void ipc.pinThread(thread.id, thread.is_group, !isPinned);
   };
@@ -124,7 +121,7 @@ export function ThreadsSidebar({
       delete nextMuted[thread.id];
     }
     const nextSettings = { ...settings, muted_threads: nextMuted };
-    dispatch({ type: "UPDATE_SETTINGS_LOCAL", settings: nextSettings });
+    setSettings(nextSettings);
     void ipc.saveSettings(nextSettings);
     void ipc.muteThread(thread.id, thread.is_group, durationSec, mute);
   };
@@ -133,7 +130,7 @@ export function ThreadsSidebar({
     if (!settings) return;
     const nextHidden = [...settings.hidden_threads, thread.id];
     const nextSettings = { ...settings, hidden_threads: nextHidden };
-    dispatch({ type: "UPDATE_SETTINGS_LOCAL", settings: nextSettings });
+    setSettings(nextSettings);
     void ipc.saveSettings(nextSettings);
     void ipc.hideThread(thread.id, thread.is_group, true);
   };
@@ -147,7 +144,7 @@ export function ThreadsSidebar({
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => dispatch({ type: "SET_SEARCH_QUERY", query: e.target.value })}
+            onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => handleSearchKeyDown(e.key)}
             placeholder="Tìm kiếm"
             className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
@@ -155,7 +152,7 @@ export function ThreadsSidebar({
           {searchQuery ? (
             <button
               type="button"
-              onClick={() => dispatch({ type: "SET_SEARCH_QUERY", query: "" })}
+              onClick={() => setSearchQuery("")}
               title="Xóa tìm kiếm"
               className="inline-flex h-4 w-4 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground"
             >
@@ -169,7 +166,7 @@ export function ThreadsSidebar({
             size="icon"
             title="Thêm bạn"
             className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
-            onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: true })}
+            onClick={() => setPhoneLookupOpen(true)}
           >
             <UserPlus className="h-[18px] w-[18px]" />
           </Button>
@@ -178,7 +175,7 @@ export function ThreadsSidebar({
             size="icon"
             title="Tạo nhóm"
             className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
-            onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: true })}
+            onClick={() => setPhoneLookupOpen(true)}
           >
             <Users className="h-[18px] w-[18px]" />
           </Button>
@@ -232,19 +229,13 @@ export function ThreadsSidebar({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => dispatch({ type: "SET_THREAD_FILTER", filter: "all" })}
-              >
+              <DropdownMenuItem onClick={() => setThreadFilter("all")}>
                 Tất cả phân loại
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => dispatch({ type: "SET_THREAD_FILTER", filter: "direct" })}
-              >
+              <DropdownMenuItem onClick={() => setThreadFilter("direct")}>
                 Tin nhắn cá nhân
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => dispatch({ type: "SET_THREAD_FILTER", filter: "groups" })}
-              >
+              <DropdownMenuItem onClick={() => setThreadFilter("groups")}>
                 Tin nhắn nhóm
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -305,7 +296,9 @@ export function ThreadsSidebar({
                         transform: `translateY(${vRow.start}px)`,
                       }}
                       onClick={() => {
-                        dispatch({ type: "SELECT_THREAD", threadId: t.id });
+                        setActiveSection("chat");
+                        setInChatSearchOpen(false);
+                        selectThread(t.id);
                         const last = t.messages.at(-1);
                         if (last && !last.is_outgoing && last.id) {
                           void ipc.sendSeen(t.id, t.is_group, last.id);

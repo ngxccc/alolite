@@ -3,19 +3,27 @@ import type { Thread } from "@/shared/types/ipc.generated";
 import { Avatar } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/utils/cn";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
 import { threadMemberCount } from "@/features/threads/utils/threads";
+import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import { InChatSearch } from "./in-chat-search";
 
 interface ChatHeaderProps {
   thread: Thread;
-  state: AppState;
-  dispatch: (action: AppAction) => void;
 }
 
-export function ChatHeader({ thread, state, dispatch }: ChatHeaderProps) {
-  const friendStatus = state.friendStatusMap[thread.id];
-  const onlineInfo = state.userOnlineMap[thread.id];
+export function ChatHeader({ thread }: ChatHeaderProps) {
+  const friendStatus = useContactsStore((s) => s.friendStatusByUid[thread.id]);
+  const onlineInfo = useContactsStore((s) => s.userOnlineMap[thread.id]);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+  const inChatSearchOpen = useUIStore((s) => s.inChatSearchOpen);
+  const inChatSearchQuery = useUIStore((s) => s.inChatSearchQuery);
+  const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
+  const setInChatSearchQuery = useUIStore((s) => s.setInChatSearchQuery);
+  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
+  const filterStarredOnly = useChatStore((s) => s.filterStarredOnly);
+  const toggleFilterStarredOnly = useChatStore((s) => s.toggleFilterStarredOnly);
+  const infoDrawerOpen = useChatStore((s) => s.infoDrawerOpen);
+  const toggleInfoDrawer = useChatStore((s) => s.toggleInfoDrawer);
 
   return (
     <header className="flex h-[68px] shrink-0 items-center justify-between border-b border-border bg-sidebar px-4">
@@ -27,7 +35,7 @@ export function ChatHeader({ thread, state, dispatch }: ChatHeaderProps) {
           isGroup={thread.is_group}
           memberCount={thread.is_group ? threadMemberCount(thread) : undefined}
           size={48}
-          mediaCache={state.mediaCache}
+          mediaCache={mediaCache}
         />
         <div className="min-w-0">
           <div className="truncate text-lg font-semibold text-foreground">
@@ -66,33 +74,28 @@ export function ChatHeader({ thread, state, dispatch }: ChatHeaderProps) {
             size="icon"
             title="Thêm thành viên vào nhóm"
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
-            onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: true })}
+            onClick={() => setPhoneLookupOpen(true)}
           >
             <UserPlus className="h-5 w-5" />
           </Button>
         ) : null}
 
         <InChatSearch
-          isOpen={state.inChatSearchOpen}
-          query={state.inChatSearchQuery}
-          onOpen={() => dispatch({ type: "TOGGLE_IN_CHAT_SEARCH", open: true })}
-          onClose={() => dispatch({ type: "TOGGLE_IN_CHAT_SEARCH", open: false })}
-          onQueryChange={(query) =>
-            dispatch({
-              type: "SET_IN_CHAT_SEARCH_QUERY",
-              query,
-            })
-          }
+          isOpen={inChatSearchOpen}
+          query={inChatSearchQuery}
+          onOpen={() => setInChatSearchOpen(true)}
+          onClose={() => setInChatSearchOpen(false)}
+          onQueryChange={setInChatSearchQuery}
         />
 
         <Button
-          variant={state.filterStarredOnly ? "accent" : "ghost"}
+          variant={filterStarredOnly ? "accent" : "ghost"}
           size="icon"
           title="Lọc tin nhắn đã gắn sao"
           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-          onClick={() => dispatch({ type: "TOGGLE_STARRED_FILTER" })}
+          onClick={toggleFilterStarredOnly}
         >
-          <Star className={cn("h-5 w-5", state.filterStarredOnly && "text-warning")} />
+          <Star className={cn("h-5 w-5", filterStarredOnly && "text-warning")} />
         </Button>
 
         {/* Info panel toggle — filled blue square when active */}
@@ -101,11 +104,11 @@ export function ChatHeader({ thread, state, dispatch }: ChatHeaderProps) {
           title="Thông tin hội thoại"
           className={cn(
             "flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors",
-            state.infoDrawerOpen
+            infoDrawerOpen
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:bg-[rgba(255,255,255,0.05)] hover:text-foreground",
           )}
-          onClick={() => dispatch({ type: "TOGGLE_INFO_DRAWER" })}
+          onClick={toggleInfoDrawer}
         >
           <PanelRight className="h-5 w-5" />
         </button>

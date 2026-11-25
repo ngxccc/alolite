@@ -14,19 +14,28 @@ import { PhoneSyncModal } from "@/features/sync/components/phone-sync-modal";
 import { SettingsModal } from "@/features/settings/components/settings-modal";
 import { WipeConfirmModal } from "@/features/settings/components/wipe-confirm-modal";
 import { DevToolsModal } from "@/features/devtools/components/dev-tools-modal";
-import { useAppStore } from "@/app/store/use-app-store";
+import {
+  bootstrapStores,
+  dispatchCoreEvent,
+  useAuthStore,
+  useChatStore,
+  useMediaCacheStore,
+  useUIStore,
+} from "@/stores";
 
 export function App() {
-  const dispatch = useAppStore((s) => s.dispatch);
-  const themeMode = useAppStore((s) => s.settings?.theme_mode ?? "dark");
-  const fontSize = useAppStore((s) => s.settings?.font_size ?? "medium");
-  const toast = useAppStore((s) => s.toast);
-  const bootstrapped = useAppStore((s) => s.bootstrapped);
-  const loggedIn = useAppStore((s) => s.loggedIn);
-  const activeSection = useAppStore((s) => s.activeSection);
-  const imageViewer = useAppStore((s) => s.imageViewer);
-  const mediaCache = useAppStore((s) => s.mediaCache);
-  const downloadDir = useAppStore((s) => s.settings?.download_dir ?? "");
+  const themeMode = useChatStore((s) => s.settings?.theme_mode ?? "dark");
+  const fontSize = useChatStore((s) => s.settings?.font_size ?? "medium");
+  const downloadDir = useChatStore((s) => s.settings?.download_dir ?? "");
+  const toast = useUIStore((s) => s.toast);
+  const clearToast = useUIStore((s) => s.clearToast);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const activeSection = useUIStore((s) => s.activeSection);
+  const imageViewer = useUIStore((s) => s.imageViewerState);
+  const setImageViewerState = useUIStore((s) => s.setImageViewerState);
+  const bootstrapped = useAuthStore((s) => s.bootstrapped);
+  const loggedIn = useAuthStore((s) => s.loggedIn);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
   const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,7 +63,7 @@ export function App() {
 
     void ipc
       .onCoreEvent((event) => {
-        if (active) dispatch({ type: "CORE_EVENT", event });
+        if (active) dispatchCoreEvent(event);
       })
       .then((fn) => {
         unlisten = fn;
@@ -65,7 +74,7 @@ export function App() {
       .bootstrapState()
       .then((snapshot) => {
         if (active) {
-          dispatch({ type: "BOOTSTRAP", snapshot });
+          bootstrapStores(snapshot);
           if (snapshot.logged_in && snapshot.settings.auto_check_updates) {
             void ipc.checkForUpdates(true);
           }
@@ -77,24 +86,24 @@ export function App() {
       active = false;
       unlisten?.();
     };
-  }, [dispatch]);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => dispatch({ type: "CLEAR_TOAST" }), 2600);
+    const t = window.setTimeout(() => clearToast(), 2600);
     return () => window.clearTimeout(t);
-  }, [toast, dispatch]);
+  }, [toast, clearToast]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
-        dispatch({ type: "OPEN_SETTINGS", open: true, tab: "privacy" });
+        setSettingsOpen(true, "privacy");
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dispatch]);
+  }, [setSettingsOpen]);
 
   if (bootError) {
     return (
@@ -144,7 +153,7 @@ export function App() {
         viewer={imageViewer}
         mediaCache={mediaCache}
         downloadDir={downloadDir}
-        onClose={() => dispatch({ type: "SET_IMAGE_VIEWER", viewer: null })}
+        onClose={() => setImageViewerState(null)}
       />
 
       {toast ? (

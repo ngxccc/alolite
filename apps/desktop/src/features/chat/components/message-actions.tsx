@@ -4,7 +4,7 @@ import type { ChatMessage, Thread } from "@/shared/types/ipc.generated";
 import { Popover, PopoverTrigger } from "@/shared/ui/popover";
 import { ChatBubbleAction, ChatBubbleActionWrapper } from "@/shared/ui/chat";
 import { cn } from "@/shared/utils/cn";
-import type { AppAction } from "@/app/store/app-reducer";
+import { useChatStore, useUIStore } from "@/stores";
 import { ReactionPickerContent } from "./message-reactions";
 
 interface MessageActionsProps {
@@ -14,7 +14,6 @@ interface MessageActionsProps {
   reactPickerFor: string | null;
   setReactPickerFor: (key: string | null) => void;
   onSelectReaction: (emoji: string) => void;
-  dispatch: (action: AppAction) => void;
   variant?: "sent" | "received";
 }
 
@@ -25,9 +24,13 @@ export function MessageActions({
   reactPickerFor,
   setReactPickerFor,
   onSelectReaction,
-  dispatch,
   variant,
 }: MessageActionsProps) {
+  const setReplyingTo = useChatStore((s) => s.setReplyingTo);
+  const setForwardMsg = useChatStore((s) => s.setForwardMsg);
+  const toggleLocalStar = useChatStore((s) => s.toggleLocalStar);
+  const deleteMessageLocal = useChatStore((s) => s.deleteMessageLocal);
+  const setStatusMessage = useUIStore((s) => s.setStatusMessage);
   const isPickerOpen = reactPickerFor === msgKey;
 
   return (
@@ -35,7 +38,7 @@ export function MessageActions({
       <ChatBubbleAction
         icon={<CornerUpLeft className="h-3.5 w-3.5" />}
         title="Trả lời"
-        onClick={() => dispatch({ type: "SET_REPLYING_TO", msg })}
+        onClick={() => setReplyingTo(msg)}
       />
 
       <Popover open={isPickerOpen} onOpenChange={(open) => setReactPickerFor(open ? msgKey : null)}>
@@ -48,19 +51,13 @@ export function MessageActions({
       <ChatBubbleAction
         icon={<Forward className="h-3.5 w-3.5" />}
         title="Chuyển tiếp"
-        onClick={() => dispatch({ type: "SET_FORWARD_MSG", msg })}
+        onClick={() => setForwardMsg(msg)}
       />
 
       <ChatBubbleAction
         icon={<Star className={cn("h-3.5 w-3.5", msg.is_starred && "text-warning")} />}
         title="Gắn sao"
-        onClick={() =>
-          dispatch({
-            type: "TOGGLE_LOCAL_STAR",
-            threadId: thread.id,
-            msgId: msg.id,
-          })
-        }
+        onClick={() => toggleLocalStar(thread.id, msg.id)}
       />
 
       {msg.is_outgoing ? (
@@ -75,17 +72,8 @@ export function MessageActions({
         icon={<Trash2 className="h-3.5 w-3.5 text-destructive" />}
         title="Xóa chỉ ở phía tôi"
         onClick={() => {
-          dispatch({
-            type: "CORE_EVENT",
-            event: {
-              type: "MessageDeleted",
-              payload: {
-                thread_id: thread.id,
-                msg_id: msg.id,
-                ts: msg.ts,
-              },
-            },
-          });
+          deleteMessageLocal(thread.id, msg.id, msg.ts);
+          setStatusMessage("Đã xóa tin nhắn khỏi lịch sử máy này");
           void ipc.deleteForMe(thread.id, thread.is_group, msg);
         }}
       />

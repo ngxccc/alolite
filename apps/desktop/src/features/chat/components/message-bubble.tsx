@@ -8,7 +8,7 @@ import {
   ChatBubbleTimestamp,
 } from "@/shared/ui/chat";
 import { cn } from "@/shared/utils/cn";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
+import { useChatStore, useMediaCacheStore, useUIStore } from "@/stores";
 import {
   isFileMessage,
   isGifUrl,
@@ -35,8 +35,6 @@ interface MessageBubbleProps {
   isGroupedWithPrev: boolean;
   highlighted: boolean;
   senderInfo: ResolvedSender | null;
-  state: AppState;
-  dispatch: (action: AppAction) => void;
   reactPickerFor: string | null;
   setReactPickerFor: (key: string | null) => void;
   jumpToQuoted: (msg: ChatMessage) => void;
@@ -51,14 +49,23 @@ export function MessageBubble({
   isGroupedWithPrev,
   highlighted,
   senderInfo,
-  state,
-  dispatch,
   reactPickerFor,
   setReactPickerFor,
   jumpToQuoted,
   resolveReplySenderName,
   setRef,
 }: MessageBubbleProps) {
+  const doubleClickToReply = useChatStore((s) => s.settings?.double_click_to_reply ?? false);
+  const downloadDir = useChatStore((s) => s.settings?.download_dir ?? "");
+  const setReplyingTo = useChatStore((s) => s.setReplyingTo);
+  const reactToMessage = useChatStore((s) => s.reactToMessage);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+  const inlineVideoSupported = useUIStore((s) => s.inlineVideoSupported);
+  const inlineVideoReason = useUIStore((s) => s.inlineVideoReason);
+  const showToast = useUIStore((s) => s.showToast);
+  const setImageViewerState = useUIStore((s) => s.setImageViewerState);
+  const setStatusMessage = useUIStore((s) => s.setStatusMessage);
+
   const isRecalled = msg.text.trim() === "[Tin nhắn đã thu hồi]";
   const callCard = parseCallCard(msg);
   const isBareSticker = Boolean(msg.sticker_id);
@@ -66,18 +73,8 @@ export function MessageBubble({
   const bubbleVariant = msg.is_outgoing ? "sent" : "received";
 
   const handleReaction = (reaction: string) => {
-    dispatch({
-      type: "CORE_EVENT",
-      event: {
-        type: "Reacted",
-        payload: {
-          thread_id: thread.id,
-          msg_id: msg.id,
-          ts: msg.ts,
-          reaction,
-        },
-      },
-    });
+    reactToMessage(thread.id, msg.id, msg.ts, reaction, false);
+    setStatusMessage("Đã thả cảm xúc");
     void ipc.reactMessage(thread.id, thread.is_group, msg, reaction);
     setReactPickerFor(null);
   };
@@ -87,8 +84,8 @@ export function MessageBubble({
       ref={setRef}
       variant={bubbleVariant}
       onDoubleClick={() => {
-        if (state.settings?.double_click_to_reply && !isRecalled) {
-          dispatch({ type: "SET_REPLYING_TO", msg });
+        if (doubleClickToReply && !isRecalled) {
+          setReplyingTo(msg);
         }
       }}
       className={cn(highlighted && "rounded-lg bg-primary/10 p-1 ring-2 ring-primary/60")}
@@ -101,7 +98,7 @@ export function MessageBubble({
             name={senderInfo.name}
             avatarUrl={senderInfo.avatar}
             size={32}
-            mediaCache={state.mediaCache}
+            mediaCache={mediaCache}
           />
         ) : (
           <div className="w-8 shrink-0" />
@@ -160,30 +157,27 @@ export function MessageBubble({
           ) : isVideoMessage(msg) && msg.link_url ? (
             <VideoMessageMedia
               msg={msg}
-              downloadDir={state.settings?.download_dir ?? ""}
-              inlineVideoSupported={state.inlineVideoSupported}
-              inlineVideoReason={state.inlineVideoReason}
-              onNotify={(message) => dispatch({ type: "SHOW_TOAST", message })}
+              downloadDir={downloadDir}
+              inlineVideoSupported={inlineVideoSupported}
+              inlineVideoReason={inlineVideoReason}
+              onNotify={(message) => showToast(message)}
             />
           ) : isPhotoMessage(msg) &&
             Boolean(msg.link_thumb ?? msg.link_url ?? isGifUrl(msg.text)) ? (
             <PhotoMessageMedia
               msg={msg}
               onOpenViewer={(texKey, fullUrl) =>
-                dispatch({
-                  type: "SET_IMAGE_VIEWER",
-                  viewer: {
-                    texKey,
-                    fullUrl,
-                    title: msg.link_title ?? "Hình ảnh",
-                    sender: senderInfo?.name ?? msg.sender,
-                    time: msg.time,
-                  },
+                setImageViewerState({
+                  texKey,
+                  fullUrl,
+                  title: msg.link_title ?? "Hình ảnh",
+                  sender: senderInfo?.name ?? msg.sender,
+                  time: msg.time,
                 })
               }
             />
           ) : isFileMessage(msg) && msg.link_url ? (
-            <FileMessageMedia msg={msg} downloadDir={state.settings?.download_dir ?? ""} />
+            <FileMessageMedia msg={msg} downloadDir={downloadDir} />
           ) : (
             <div>
               <div className="select-text">{msg.text}</div>
@@ -236,7 +230,6 @@ export function MessageBubble({
           reactPickerFor={reactPickerFor}
           setReactPickerFor={setReactPickerFor}
           onSelectReaction={handleReaction}
-          dispatch={dispatch}
           variant={bubbleVariant}
         />
       ) : null}

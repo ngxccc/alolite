@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
+import { useUIStore } from "@/stores";
 import type { AutoReplyRule } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -8,7 +9,8 @@ import { cn } from "@/shared/utils/cn";
 import { RowDivider, SectionHeading, SettingCard, SwitchRow } from "../primitives";
 import type { SettingsTabProps } from "../types";
 
-export function UtilitiesTab({ settings, updateSettings, dispatch }: SettingsTabProps) {
+export function UtilitiesTab({ settings, updateSettings }: SettingsTabProps) {
+  const showToast = useUIStore((s) => s.showToast);
   const [autoReplyRules, setAutoReplyRules] = useState<AutoReplyRule[]>([]);
   const [newRuleKw, setNewRuleKw] = useState("");
   const [newRuleReply, setNewRuleReply] = useState("");
@@ -172,10 +174,7 @@ export function UtilitiesTab({ settings, updateSettings, dispatch }: SettingsTab
             size="sm"
             onClick={async () => {
               const p = await ipc.exportCustomStickersTemplate();
-              dispatch({
-                type: "SHOW_TOAST",
-                message: `Đã xuất mẫu ${p}`,
-              });
+              showToast(`Đã xuất mẫu ${p}`);
             }}
           >
             Xuất mẫu custom_stickers.json

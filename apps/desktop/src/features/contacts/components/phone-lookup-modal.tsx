@@ -3,37 +3,47 @@ import { MessageSquare, Search, UserPlus } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Avatar } from "@/shared/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 
-interface PhoneLookupModalProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
-
-export function PhoneLookupModal({
-  state: propState,
-  dispatch: propDispatch,
-}: PhoneLookupModalProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function PhoneLookupModal() {
+  const phoneLookupOpen = useUIStore((s) => s.phoneLookupOpen);
+  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
+  const setActiveSection = useUIStore((s) => s.setActiveSection);
+  const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
+  const selectThread = useChatStore((s) => s.selectThread);
+  const phoneLookupLoading = useContactsStore((s) => s.phoneLookupLoading);
+  const phoneLookupResult = useContactsStore((s) => s.phoneLookupResult);
+  const phoneLookupError = useContactsStore((s) => s.phoneLookupError);
+  const setPhoneLookupLoading = useContactsStore((s) => s.setPhoneLookupLoading);
+  const setPhoneLookupError = useContactsStore((s) => s.setPhoneLookupError);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
   const [phone, setPhone] = useState("");
-  if (!state.phoneModalOpen) return null;
 
-  const submit = (e: SyntheticEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  if (!phoneLookupOpen) return null;
+
+  const startLookup = () => {
     if (!phone.trim()) return;
-    dispatch({ type: "START_PHONE_LOOKUP" });
+    setPhoneLookupError(null);
+    setPhoneLookupLoading(true);
     void ipc.lookupPhone(phone.trim());
   };
 
-  const p = state.phoneLookupResult;
+  const submit = (e: SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    startLookup();
+  };
+
+  const p = phoneLookupResult;
 
   return (
     <Dialog
-      open={state.phoneModalOpen}
-      onOpenChange={(open) => !open && dispatch({ type: "SET_PHONE_MODAL", open: false })}
+      open={phoneLookupOpen}
+      onOpenChange={(open) => {
+        if (!open) {
+          setPhoneLookupError(null);
+          setPhoneLookupOpen(false);
+        }
+      }}
     >
       {/* Zalo-style: rounded-lg (8px), dark overlay, bg-card body */}
       <DialogContent className="max-w-[460px] rounded-lg border border-border bg-card p-0 shadow-2xl">
@@ -64,9 +74,9 @@ export function PhoneLookupModal({
           </form>
 
           {/* Error message */}
-          {state.phoneLookupError ? (
+          {phoneLookupError ? (
             <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {state.phoneLookupError}
+              {phoneLookupError}
             </div>
           ) : null}
 
@@ -79,7 +89,7 @@ export function PhoneLookupModal({
                   name={p.display_name || p.zalo_name}
                   avatarUrl={p.avatar}
                   size={46}
-                  mediaCache={state.mediaCache}
+                  mediaCache={mediaCache}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-base font-medium text-foreground">
@@ -97,8 +107,10 @@ export function PhoneLookupModal({
                 <button
                   type="button"
                   onClick={() => {
-                    dispatch({ type: "SELECT_THREAD", threadId: p.user_id });
-                    dispatch({ type: "SET_PHONE_MODAL", open: false });
+                    setActiveSection("chat");
+                    setInChatSearchOpen(false);
+                    selectThread(p.user_id);
+                    setPhoneLookupOpen(false);
                   }}
                   className="flex h-8 items-center gap-1.5 rounded-[6px] bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-secondary/80"
                 >
@@ -119,7 +131,10 @@ export function PhoneLookupModal({
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: false })}
+              onClick={() => {
+                setPhoneLookupError(null);
+                setPhoneLookupOpen(false);
+              }}
               className="flex h-9 items-center rounded-[6px] bg-secondary px-6 text-sm font-medium text-foreground transition-colors hover:bg-secondary/80"
             >
               Hủy
@@ -127,16 +142,12 @@ export function PhoneLookupModal({
             <button
               type="submit"
               form="phone-lookup-form"
-              onClick={() => {
-                if (!phone.trim()) return;
-                dispatch({ type: "START_PHONE_LOOKUP" });
-                void ipc.lookupPhone(phone.trim());
-              }}
-              disabled={state.phoneLookupLoading}
+              onClick={startLookup}
+              disabled={phoneLookupLoading}
               className="flex h-9 items-center gap-1.5 rounded-[6px] bg-primary px-6 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-60"
             >
               <Search className="h-3.5 w-3.5" />
-              {state.phoneLookupLoading ? "Đang tìm…" : "Tìm kiếm"}
+              {phoneLookupLoading ? "Đang tìm…" : "Tìm kiếm"}
             </button>
           </div>
         </div>

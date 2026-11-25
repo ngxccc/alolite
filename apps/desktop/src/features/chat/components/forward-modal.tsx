@@ -5,30 +5,23 @@ import { Avatar } from "@/shared/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { matchesVnQuery } from "@/shared/utils/text";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useChatStore, useMediaCacheStore, useUIStore } from "@/stores";
 
-interface ForwardModalProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
-
-export function ForwardModal({ state: propState, dispatch: propDispatch }: ForwardModalProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function ForwardModal() {
+  const forwardMsg = useChatStore((s) => s.forwardMsg);
+  const setForwardMsg = useChatStore((s) => s.setForwardMsg);
+  const threads = useChatStore((s) => s.threads);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+  const showToast = useUIStore((s) => s.showToast);
   const [filter, setFilter] = useState("");
-  if (!state.forwardMsg) return null;
 
-  const msg = state.forwardMsg;
-  const preview = msg.sticker_id ? "[Nhãn dán]" : msg.text.slice(0, 80);
-  const candidates = state.threads.filter((t) => matchesVnQuery(t.name, filter));
+  if (!forwardMsg) return null;
+
+  const preview = forwardMsg.sticker_id ? "[Nhãn dán]" : forwardMsg.text.slice(0, 80);
+  const candidates = threads.filter((t) => matchesVnQuery(t.name, filter));
 
   return (
-    <Dialog
-      open={Boolean(state.forwardMsg)}
-      onOpenChange={(open) => !open && dispatch({ type: "SET_FORWARD_MSG", msg: null })}
-    >
+    <Dialog open={Boolean(forwardMsg)} onOpenChange={(open) => !open && setForwardMsg(null)}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-semibold">
@@ -58,12 +51,9 @@ export function ForwardModal({ state: propState, dispatch: propDispatch }: Forwa
                 key={t.id}
                 type="button"
                 onClick={() => {
-                  void ipc.forwardMessage(t.id, t.is_group, msg);
-                  dispatch({ type: "SET_FORWARD_MSG", msg: null });
-                  dispatch({
-                    type: "SHOW_TOAST",
-                    message: `Đang chuyển tiếp tới ${t.name}`,
-                  });
+                  void ipc.forwardMessage(t.id, t.is_group, forwardMsg);
+                  setForwardMsg(null);
+                  showToast(`Đang chuyển tiếp tới ${t.name}`);
                 }}
                 className="flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium transition hover:bg-accent hover:text-accent-foreground"
               >
@@ -73,7 +63,7 @@ export function ForwardModal({ state: propState, dispatch: propDispatch }: Forwa
                   avatarUrl={t.avatar}
                   isGroup={t.is_group}
                   size={36}
-                  mediaCache={state.mediaCache}
+                  mediaCache={mediaCache}
                 />
                 <span className="truncate">{t.is_group ? `[Nhóm] ${t.name}` : t.name}</span>
               </button>

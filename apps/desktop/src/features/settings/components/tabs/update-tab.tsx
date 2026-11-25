@@ -1,65 +1,70 @@
 import { Download, RefreshCw } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Button } from "@/shared/ui/button";
+import { useAuthStore, useUIStore } from "@/stores";
 import { RowDivider, SectionHeading, SettingCard, SwitchRow } from "../primitives";
 import type { SettingsTabProps } from "../types";
 
-export function UpdateTab({ state, settings, updateSettings, dispatch }: SettingsTabProps) {
+export function UpdateTab({ settings, updateSettings }: SettingsTabProps) {
+  const appVersion = useAuthStore((s) => s.appVersion);
+  const updateChecking = useUIStore((s) => s.updateChecking);
+  const updateInfo = useUIStore((s) => s.updateInfo);
+  const updateDownloading = useUIStore((s) => s.updateDownloading);
+  const updateDownloadMessage = useUIStore((s) => s.updateDownloadMessage);
+  const setUpdateChecking = useUIStore((s) => s.setUpdateChecking);
+
   return (
     <>
       <SectionHeading>Cập nhật ứng dụng</SectionHeading>
       <SettingCard>
         <div className="flex items-center justify-between px-4 py-3">
           <div>
-            <div className="text-sm font-medium text-foreground">AloLite v{state.appVersion}</div>
+            <div className="text-sm font-medium text-foreground">AloLite v{appVersion}</div>
             <div className="text-xs text-muted-foreground">
-              {state.updateChecking
+              {updateChecking
                 ? "Đang kiểm tra bản phát hành mới…"
-                : state.updateInfo?.has_update
-                  ? `Có bản mới v${state.updateInfo.latest_version}`
+                : updateInfo?.has_update
+                  ? `Có bản mới v${updateInfo.latest_version}`
                   : "Kiểm tra cập nhật trực tiếp từ GitHub Releases"}
             </div>
           </div>
           <Button
             variant="default"
             size="sm"
-            disabled={state.updateChecking}
+            disabled={updateChecking}
             onClick={() => {
-              dispatch({ type: "SET_UPDATE_CHECKING", checking: true });
+              setUpdateChecking(true);
               void ipc.checkForUpdates(false);
             }}
           >
             <RefreshCw className="h-3.5 w-3.5" /> Kiểm tra ngay
           </Button>
         </div>
-        {state.updateInfo?.has_update && state.updateInfo.download_url ? (
+        {updateInfo?.has_update && updateInfo.download_url ? (
           <>
             <RowDivider />
             <div className="px-4 py-3">
               <Button
                 variant="default"
-                disabled={state.updateDownloading}
+                disabled={updateDownloading}
                 onClick={() =>
                   void ipc.downloadAndApplyUpdate(
-                    state.updateInfo!.download_url!,
-                    state.updateInfo!.asset_name ?? "alolite",
-                    state.updateInfo!.latest_version,
-                    state.updateInfo!.expected_sha256,
+                    updateInfo.download_url!,
+                    updateInfo.asset_name ?? "alolite",
+                    updateInfo.latest_version,
+                    updateInfo.expected_sha256,
                   )
                 }
               >
-                <Download className="h-3.5 w-3.5" /> Tải và cài đặt v
-                {state.updateInfo.latest_version}
+                <Download className="h-3.5 w-3.5" /> Tải và cài đặt v{updateInfo.latest_version}
               </Button>
             </div>
           </>
         ) : null}
-        {state.updateDownloadMessage ? (
+        {updateDownloadMessage ? (
           <>
             <RowDivider />
-            <div className="px-4 py-2 text-xs text-muted-foreground">
-              {state.updateDownloadMessage}
-            </div>
+            <div className="px-4 py-2 text-xs text-muted-foreground">{updateDownloadMessage}</div>
           </>
         ) : null}
       </SettingCard>
