@@ -7,7 +7,7 @@ import {
   ChatBubbleMessage,
   ChatBubbleTimestamp,
 } from "@/shared/ui/chat";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { useChatStore, useMediaCacheStore, useUIStore } from "@/stores";
 import {
   isFileMessage,

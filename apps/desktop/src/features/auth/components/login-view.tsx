@@ -9,10 +9,11 @@ import {
   UserCheck,
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 import { useAuthStore, useUIStore } from "@/stores";
@@ -104,7 +105,7 @@ export function LoginView() {
   const formattedError = loginError ? formatAuthErrorMessage(loginError) : null;
 
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider delay={250}>
       <div className="flex h-full min-h-screen w-full items-center justify-center bg-canvas p-6 selection:bg-primary/20">
         <div className="flex w-full max-w-[440px] flex-col gap-5 rounded-2xl border border-border/80 bg-card/95 p-7 text-card-foreground shadow-2xl backdrop-blur-md">
           {/* ── Header ── */}
@@ -162,7 +163,7 @@ export function LoginView() {
               <div className="relative flex h-[240px] w-[240px] items-center justify-center overflow-hidden rounded-2xl border border-black/10 bg-white p-3 shadow-md">
                 {/* State A: Phone scanned, awaiting mobile confirmation */}
                 {qrScannedName ? (
-                  <div className="animate-in fade-in zoom-in-95 flex flex-col items-center justify-center gap-2.5 p-2 text-center duration-200">
+                  <div className="flex animate-in flex-col items-center justify-center gap-2.5 p-2 text-center duration-200 zoom-in-95 fade-in">
                     <div className="relative">
                       {qrScannedAvatar ? (
                         <img
@@ -190,7 +191,7 @@ export function LoginView() {
                   </div>
                 ) : hasQrError && formattedError ? (
                   /* State B: Error / Timeout directly on QR plate */
-                  <div className="animate-in fade-in flex flex-col items-center justify-center gap-2 p-3 text-center duration-150">
+                  <div className="flex animate-in flex-col items-center justify-center gap-2 p-3 text-center duration-150 fade-in">
                     <div className="flex h-11 w-11 items-center justify-center rounded-full bg-destructive/15 text-destructive">
                       <AlertCircle className="h-6 w-6" />
                     </div>
@@ -276,9 +277,7 @@ export function LoginView() {
             <TabsContent value="password" className="m-0">
               <form onSubmit={handlePasswordLogin} className="flex flex-col gap-3.5">
                 <div className="flex flex-col gap-1.5">
-                  <label htmlFor="phone-input" className="text-sm font-medium text-foreground">
-                    Số điện thoại
-                  </label>
+                  <Label htmlFor="phone-input">Số điện thoại</Label>
                   <Input
                     id="phone-input"
                     type="tel"
@@ -292,9 +291,7 @@ export function LoginView() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label htmlFor="password-input" className="text-sm font-medium text-foreground">
-                    Mật khẩu
-                  </label>
+                  <Label htmlFor="password-input">Mật khẩu</Label>
                   <Input
                     id="password-input"
                     type="password"
@@ -308,12 +305,7 @@ export function LoginView() {
                 {captchaImg ? (
                   <div className="flex flex-col gap-2 rounded-lg border border-border/80 bg-muted/30 p-3">
                     <div className="flex items-center justify-between">
-                      <label
-                        htmlFor="captcha-input"
-                        className="text-sm font-medium text-foreground"
-                      >
-                        Mã xác thực
-                      </label>
+                      <Label htmlFor="captcha-input">Mã xác thực</Label>
                       <Button
                         type="button"
                         variant="ghost"
@@ -404,7 +396,7 @@ export function LoginView() {
                     className="group flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/50 bg-secondary/40 p-2.5 text-left transition hover:border-primary/50 hover:bg-accent/40 focus:ring-2 focus:ring-ring focus:outline-none"
                   >
                     <div className="flex min-w-0 items-center gap-3">
-                      <Avatar
+                      <UserAvatar
                         id={acc.uin}
                         name={acc.display_name}
                         avatarUrl={acc.avatar}

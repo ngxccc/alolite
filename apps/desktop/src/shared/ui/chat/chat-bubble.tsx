@@ -1,8 +1,8 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Button, type ButtonProps } from "@/shared/ui/button";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 
 // ── ChatBubble ───────────────────────────────────────────────
 const chatBubbleVariant = cva("group relative flex max-w-[76%] items-end gap-2 transition-colors", {
@@ -59,7 +59,7 @@ export const ChatBubbleAvatar: React.FC<ChatBubbleAvatarProps> = ({
   mediaCache,
   className,
 }) => (
-  <Avatar
+  <UserAvatar
     id={id}
     name={name}
     avatarUrl={avatarUrl}

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { SmilePlus, Undo2 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { PopoverContent } from "@/shared/ui/popover";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import {
   CATEGORY_ICONS,
   EMOJI_CATEGORIES,

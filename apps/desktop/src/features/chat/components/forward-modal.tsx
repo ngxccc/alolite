@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Forward, Search } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { matchesVnQuery } from "@/shared/utils/text";
@@ -57,7 +57,7 @@ export function ForwardModal() {
                 }}
                 className="flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium transition hover:bg-accent hover:text-accent-foreground"
               >
-                <Avatar
+                <UserAvatar
                   id={t.id}
                   name={t.name}
                   avatarUrl={t.avatar}

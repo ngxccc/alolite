@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import {
@@ -34,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { matchesVnQuery } from "@/shared/utils/text";
 import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import {
@@ -213,20 +213,22 @@ export function ThreadsSidebar() {
 
         <div className="flex items-center gap-1">
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex cursor-pointer items-center gap-0.5 text-sm text-muted-foreground transition hover:text-foreground"
-              >
-                <span>
-                  {threadFilter === "direct"
-                    ? "Cá nhân"
-                    : threadFilter === "groups"
-                      ? "Nhóm"
-                      : "Phân loại"}
-                </span>
-                <ChevronDown className="h-3 w-3" />
-              </button>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="inline-flex cursor-pointer items-center gap-0.5 text-sm text-muted-foreground transition hover:text-foreground"
+                />
+              }
+            >
+              <span>
+                {threadFilter === "direct"
+                  ? "Cá nhân"
+                  : threadFilter === "groups"
+                    ? "Nhóm"
+                    : "Phân loại"}
+              </span>
+              <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setThreadFilter("all")}>
@@ -242,14 +244,16 @@ export function ThreadsSidebar() {
           </DropdownMenu>
 
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                title="Tùy chọn khác"
-                className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  title="Tùy chọn khác"
+                  className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                />
+              }
+            >
+              <MoreHorizontal className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem
@@ -289,83 +293,85 @@ export function ThreadsSidebar() {
 
               return (
                 <ContextMenu key={t.id}>
-                  <ContextMenuTrigger asChild>
-                    <div
-                      style={{
-                        height: vRow.size,
-                        transform: `translateY(${vRow.start}px)`,
-                      }}
-                      onClick={() => {
-                        setActiveSection("chat");
-                        setInChatSearchOpen(false);
-                        selectThread(t.id);
-                        const last = t.messages.at(-1);
-                        if (last && !last.is_outgoing && last.id) {
-                          void ipc.sendSeen(t.id, t.is_group, last.id);
-                        }
-                      }}
-                      className={cn(
-                        "absolute inset-x-2 top-0 flex cursor-pointer items-center gap-3 rounded-[6px] px-2 transition-colors select-none",
-                        selected
-                          ? "bg-accent text-foreground"
-                          : "hover:bg-foreground/5 dark:hover:bg-[rgba(255,255,255,0.05)]",
-                      )}
-                    >
-                      <Avatar
-                        id={t.id}
-                        name={t.name}
-                        avatarUrl={t.avatar}
-                        isGroup={t.is_group}
-                        memberCount={t.is_group ? threadMemberCount(t) : undefined}
-                        size={48}
-                        mediaCache={mediaCache}
+                  <ContextMenuTrigger
+                    render={
+                      <div
+                        style={{
+                          height: vRow.size,
+                          transform: `translateY(${vRow.start}px)`,
+                        }}
+                        onClick={() => {
+                          setActiveSection("chat");
+                          setInChatSearchOpen(false);
+                          selectThread(t.id);
+                          const last = t.messages.at(-1);
+                          if (last && !last.is_outgoing && last.id) {
+                            void ipc.sendSeen(t.id, t.is_group, last.id);
+                          }
+                        }}
+                        className={cn(
+                          "absolute inset-x-2 top-0 flex cursor-pointer items-center gap-3 rounded-[6px] px-2 transition-colors select-none",
+                          selected
+                            ? "bg-accent text-foreground"
+                            : "hover:bg-foreground/5 dark:hover:bg-[rgba(255,255,255,0.05)]",
+                        )}
                       />
-                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <div className="flex items-center justify-between gap-1">
-                          <span
-                            className={cn(
-                              "truncate text-base text-foreground",
-                              hasDot ? "font-semibold" : "font-normal",
-                            )}
-                          >
-                            {t.name || t.id}
-                          </span>
-                          <span className="shrink-0 text-xs text-muted-foreground">{t.time}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-1.5">
-                          <span className="truncate text-sm text-muted-foreground">
-                            {t.presentation.last_outgoing &&
-                            !t.preview.startsWith("Bạn:") &&
-                            !t.preview.startsWith("You:")
-                              ? `You: ${t.preview || "Hình ảnh"}`
-                              : t.is_group && t.presentation.last_sender && !t.preview.includes(":")
-                                ? `${t.presentation.last_sender}: ${t.preview}`
-                                : t.preview || "Chưa có tin nhắn"}
-                          </span>
-                          <div className="inline-flex shrink-0 items-center gap-1">
-                            {pinned ? <Pin className="h-3 w-3 text-muted-foreground" /> : null}
-                            {muted ? <BellOff className="h-3 w-3 text-muted-foreground" /> : null}
-                            {unread > 0 ? (
-                              <Badge
-                                variant="destructive"
-                                className={cn(
-                                  "h-4 rounded-full text-xs leading-none font-bold",
-                                  unread > 9 ? "min-w-4 px-1" : "w-4 p-0",
-                                )}
-                              >
-                                {unread > 99 ? "99+" : unread}
-                              </Badge>
-                            ) : t.unread.marked_unread ? (
-                              <span className="h-2 w-2 rounded-full bg-primary" />
-                            ) : null}
-                          </div>
+                    }
+                  >
+                    <UserAvatar
+                      id={t.id}
+                      name={t.name}
+                      avatarUrl={t.avatar}
+                      isGroup={t.is_group}
+                      memberCount={t.is_group ? threadMemberCount(t) : undefined}
+                      size={48}
+                      mediaCache={mediaCache}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className={cn(
+                            "truncate text-base text-foreground",
+                            hasDot ? "font-semibold" : "font-normal",
+                          )}
+                        >
+                          {t.name || t.id}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{t.time}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="truncate text-sm text-muted-foreground">
+                          {t.presentation.last_outgoing &&
+                          !t.preview.startsWith("Bạn:") &&
+                          !t.preview.startsWith("You:")
+                            ? `You: ${t.preview || "Hình ảnh"}`
+                            : t.is_group && t.presentation.last_sender && !t.preview.includes(":")
+                              ? `${t.presentation.last_sender}: ${t.preview}`
+                              : t.preview || "Chưa có tin nhắn"}
+                        </span>
+                        <div className="inline-flex shrink-0 items-center gap-1">
+                          {pinned ? <Pin className="h-3 w-3 text-muted-foreground" /> : null}
+                          {muted ? <BellOff className="h-3 w-3 text-muted-foreground" /> : null}
+                          {unread > 0 ? (
+                            <Badge
+                              variant="destructive"
+                              className={cn(
+                                "h-4 rounded-full text-xs leading-none font-bold",
+                                unread > 9 ? "min-w-4 px-1" : "w-4 p-0",
+                              )}
+                            >
+                              {unread > 99 ? "99+" : unread}
+                            </Badge>
+                          ) : t.unread.marked_unread ? (
+                            <span className="h-2 w-2 rounded-full bg-primary" />
+                          ) : null}
                         </div>
                       </div>
                     </div>
                   </ContextMenuTrigger>
 
                   <ContextMenuContent>
-                    <ContextMenuItem onSelect={() => togglePin(t)}>
+                    <ContextMenuItem onClick={() => togglePin(t)}>
                       {pinned ? (
                         <>
                           <PinOff className="h-4 w-4" /> Bỏ ghim hội thoại
@@ -377,7 +383,7 @@ export function ThreadsSidebar() {
                       )}
                     </ContextMenuItem>
                     <ContextMenuItem
-                      onSelect={() => {
+                      onClick={() => {
                         const markUnread = !t.unread.marked_unread;
                         void ipc.markThreadUnread(t.id, t.is_group, markUnread);
                       }}
@@ -393,26 +399,26 @@ export function ThreadsSidebar() {
                       )}
                     </ContextMenuItem>
                     {muted ? (
-                      <ContextMenuItem onSelect={() => toggleMute(t, 0, false)}>
+                      <ContextMenuItem onClick={() => toggleMute(t, 0, false)}>
                         <BellOff className="h-4 w-4" /> Bật lại thông báo
                       </ContextMenuItem>
                     ) : (
                       <>
-                        <ContextMenuItem onSelect={() => toggleMute(t, 3600, true)}>
+                        <ContextMenuItem onClick={() => toggleMute(t, 3600, true)}>
                           <BellOff className="h-4 w-4" /> Tắt thông báo 1 giờ
                         </ContextMenuItem>
-                        <ContextMenuItem onSelect={() => toggleMute(t, -1, true)}>
+                        <ContextMenuItem onClick={() => toggleMute(t, -1, true)}>
                           <BellOff className="h-4 w-4" /> Tắt đến khi bật lại
                         </ContextMenuItem>
                       </>
                     )}
-                    <ContextMenuItem onSelect={() => toggleHide(t)}>
+                    <ContextMenuItem onClick={() => toggleHide(t)}>
                       <EyeOff className="h-4 w-4" /> Ẩn trò chuyện
                     </ContextMenuItem>
                     <ContextMenuSeparator />
                     <ContextMenuItem
-                      destructive
-                      onSelect={() => {
+                      variant="destructive"
+                      onClick={() => {
                         const last = t.messages.at(-1);
                         void ipc.deleteThread(
                           t.id,

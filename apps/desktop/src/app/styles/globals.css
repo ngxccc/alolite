@@ -1,7 +1,10 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /*
- * Single Source of Truth Design Tokens (shadcn/ui + Tailwind v4 + Zalo Chat Tokens)
+ * Single Source of Truth Design Tokens (shadcn/ui Base UI + Tailwind v4 + Zinc Chat Tokens)
  * Layer 1: App 4-Column Shell (--rail, --sidebar, --canvas)
  * Layer 2: shadcn/ui Core Tokens (--background, --foreground, --card, --popover, --primary, --secondary, --muted, --accent, --destructive, --border, --input, --ring, --radius)
  * Layer 3: Chat Semantic Tokens (--bubble-in, --bubble-out, --online, --warning)
@@ -9,7 +12,7 @@
 
 :root {
   --font-sans:
-    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "Be Vietnam Pro",
+    "Inter Variable", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Noto Sans", sans-serif;
   --app-font-size: 16px;
 }
@@ -33,122 +36,122 @@
 [data-theme="light"] {
   --radius: 0.5rem;
 
-  /* Layer 1: 4-Column Shell (sampled from Zalo Web, light) */
-  --rail: #005ae0;
-  --rail-foreground: #ffffff;
-  --rail-muted: rgba(0, 0, 0, 0.25);
+  /* Layer 1: 4-Column Shell (Zinc Light) */
+  --rail: #18181b;
+  --rail-foreground: #fafafa;
+  --rail-muted: rgba(255, 255, 255, 0.1);
   --sidebar: #ffffff;
-  --sidebar-foreground: #081b3a;
-  --canvas: #ebecf0;
+  --sidebar-foreground: #09090b;
+  --canvas: #fafafa;
 
-  /* Layer 2: shadcn/ui Core */
+  /* Layer 2: shadcn/ui Core (Zinc Light) */
   --background: #ffffff;
-  --foreground: #081b3a;
+  --foreground: #09090b;
   --card: #ffffff;
-  --card-foreground: #081b3a;
+  --card-foreground: #09090b;
   --popover: #ffffff;
-  --popover-foreground: #081b3a;
-  --primary: #0068ff;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f2f4;
-  --secondary-foreground: #081b3a;
-  --muted: #f1f2f4;
-  --muted-foreground: #5a6981;
-  --accent: #e5f1ff;
-  --accent-foreground: #0068ff;
-  --destructive: #e94949;
-  --destructive-foreground: #ffffff;
-  --border: #dfe2e7;
-  --input: #dfe2e7;
-  --ring: #0068ff;
+  --popover-foreground: #09090b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --destructive-foreground: #fafafa;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #18181b;
 
-  /* Layer 3: Chat Semantic Tokens */
+  /* Layer 3: Chat Semantic Tokens (Zinc Light) */
   --bubble-in: #ffffff;
-  --bubble-in-foreground: #081b3a;
-  --bubble-in-border: #dfe2e7;
-  --bubble-out: #e5f1ff;
-  --bubble-out-foreground: #081b3a;
-  --bubble-out-border: #e5f1ff;
-  --online: #10b981;
+  --bubble-in-foreground: #09090b;
+  --bubble-in-border: #e4e4e7;
+  --bubble-out: #18181b;
+  --bubble-out-foreground: #fafafa;
+  --bubble-out-border: #18181b;
+  --online: #16a34a;
   --warning: #f59e0b;
 }
 
 [data-theme="dark"] {
   --radius: 0.5rem;
 
-  /* Layer 1: 4-Column Shell (sampled from Zalo Web, dark) */
-  --rail: #121416;
-  --rail-foreground: #dfe2e7;
-  --rail-muted: rgba(255, 255, 255, 0.05);
-  --sidebar: #22262b;
-  --sidebar-foreground: #dfe2e7;
-  --canvas: #16191d;
+  /* Layer 1: 4-Column Shell (Zinc Dark) */
+  --rail: #09090b;
+  --rail-foreground: #fafafa;
+  --rail-muted: rgba(255, 255, 255, 0.08);
+  --sidebar: #09090b;
+  --sidebar-foreground: #fafafa;
+  --canvas: #09090b;
 
-  /* Layer 2: shadcn/ui Core */
-  --background: #22262b;
-  --foreground: #dfe2e7;
-  --card: #22262b;
-  --card-foreground: #dfe2e7;
-  --popover: #22262b;
-  --popover-foreground: #dfe2e7;
-  --primary: #0068ff;
-  --primary-foreground: #ffffff;
-  --secondary: #2c323a;
-  --secondary-foreground: #dfe2e7;
-  --muted: #16191d;
-  --muted-foreground: #9facbc;
-  --accent: #1f344d;
-  --accent-foreground: #66a6ff;
-  --destructive: #e94949;
-  --destructive-foreground: #ffffff;
-  --border: #343a42;
-  --input: #16191d;
-  --ring: #0068ff;
+  /* Layer 2: shadcn/ui Core (Zinc Dark) */
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --destructive: #f87171;
+  --destructive-foreground: #450a0a;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #d4d4d8;
 
-  /* Layer 3: Chat Semantic Tokens */
-  --bubble-in: #282d33;
-  --bubble-in-foreground: #dfe2e7;
-  --bubble-in-border: #282d33;
-  --bubble-out: #1f344d;
-  --bubble-out-foreground: #dfe2e7;
-  --bubble-out-border: #1f344d;
+  /* Layer 3: Chat Semantic Tokens (Zinc Dark) */
+  --bubble-in: #18181b;
+  --bubble-in-foreground: #fafafa;
+  --bubble-in-border: #27272a;
+  --bubble-out: #27272a;
+  --bubble-out-foreground: #fafafa;
+  --bubble-out-border: #3f3f46;
   --online: #22c55e;
   --warning: #fbbf24;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --rail: #121416;
-    --rail-foreground: #dfe2e7;
-    --rail-muted: rgba(255, 255, 255, 0.05);
-    --sidebar: #22262b;
-    --sidebar-foreground: #dfe2e7;
-    --canvas: #16191d;
-    --background: #22262b;
-    --foreground: #dfe2e7;
-    --card: #22262b;
-    --card-foreground: #dfe2e7;
-    --popover: #22262b;
-    --popover-foreground: #dfe2e7;
-    --primary: #0068ff;
-    --primary-foreground: #ffffff;
-    --secondary: #2c323a;
-    --secondary-foreground: #dfe2e7;
-    --muted: #16191d;
-    --muted-foreground: #9facbc;
-    --accent: #1f344d;
-    --accent-foreground: #66a6ff;
-    --destructive: #e94949;
-    --destructive-foreground: #ffffff;
-    --border: #343a42;
-    --input: #16191d;
-    --ring: #0068ff;
-    --bubble-in: #282d33;
-    --bubble-in-foreground: #dfe2e7;
-    --bubble-in-border: #282d33;
-    --bubble-out: #1f344d;
-    --bubble-out-foreground: #dfe2e7;
-    --bubble-out-border: #1f344d;
+    --rail: #09090b;
+    --rail-foreground: #fafafa;
+    --rail-muted: rgba(255, 255, 255, 0.08);
+    --sidebar: #09090b;
+    --sidebar-foreground: #fafafa;
+    --canvas: #09090b;
+    --background: #09090b;
+    --foreground: #fafafa;
+    --card: #18181b;
+    --card-foreground: #fafafa;
+    --popover: #18181b;
+    --popover-foreground: #fafafa;
+    --primary: #fafafa;
+    --primary-foreground: #18181b;
+    --secondary: #27272a;
+    --secondary-foreground: #fafafa;
+    --muted: #27272a;
+    --muted-foreground: #a1a1aa;
+    --accent: #27272a;
+    --accent-foreground: #fafafa;
+    --destructive: #f87171;
+    --destructive-foreground: #450a0a;
+    --border: #27272a;
+    --input: #27272a;
+    --ring: #d4d4d8;
+    --bubble-in: #18181b;
+    --bubble-in-foreground: #fafafa;
+    --bubble-in-border: #27272a;
+    --bubble-out: #27272a;
+    --bubble-out-foreground: #fafafa;
+    --bubble-out-border: #3f3f46;
     --online: #22c55e;
     --warning: #fbbf24;
   }
@@ -192,9 +195,10 @@
   --color-online: var(--online);
   --color-warning: var(--warning);
 
-  --radius-sm: calc(var(--radius) - 2px);
-  --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 4px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 @layer base {
@@ -214,6 +218,7 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     font-size: 1rem;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -241,5 +246,16 @@
 
   ::-webkit-scrollbar-thumb:hover {
     background: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

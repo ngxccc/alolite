@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  ChevronDown,
   ClipboardList,
   MoreHorizontal,
   Search,
@@ -11,8 +10,11 @@ import {
   Filter,
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
-import { cn } from "@/shared/utils/cn";
+import { Button } from "@/shared/ui/button";
+import { Card } from "@/shared/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
+import { UserAvatar } from "@/shared/ui/user-avatar";
+import { cn } from "cn";
 import { foldVnSearch, matchesVnQuery } from "@/shared/utils/text";
 import type { Thread } from "@/shared/types/ipc.generated";
 import {
@@ -296,39 +298,51 @@ function ContactListPanel({
             />
           </div>
           {/* Sort select */}
-          <div className="relative flex h-8 items-center gap-1.5 rounded-[5px] bg-canvas px-2.5">
-            <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <select
-              value={sortKey}
-              onChange={(e) => onSort(e.target.value as SortKey)}
-              className="cursor-pointer appearance-none bg-transparent pr-5 text-sm text-foreground focus:outline-none"
-            >
+          <Select
+            value={sortKey}
+            items={
+              isGroups
+                ? [
+                    { value: "recent", label: "Cập nhật gần nhất" },
+                    { value: "name_asc", label: "Tên (A-Z)" },
+                    { value: "name_desc", label: "Tên (Z-A)" },
+                  ]
+                : [
+                    { value: "name_asc", label: "Tên (A-Z)" },
+                    { value: "name_desc", label: "Tên (Z-A)" },
+                  ]
+            }
+            onValueChange={(v) => v && onSort(v)}
+          >
+            <SelectTrigger className="h-8 w-auto min-w-[140px] gap-1.5 border-border bg-canvas px-2.5 text-sm">
+              <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
               {isGroups ? (
                 <>
-                  <option value="recent">Cập nhật gần nhất</option>
-                  <option value="name_asc">Tên (A-Z)</option>
-                  <option value="name_desc">Tên (Z-A)</option>
+                  <SelectItem value="recent">Cập nhật gần nhất</SelectItem>
+                  <SelectItem value="name_asc">Tên (A-Z)</SelectItem>
+                  <SelectItem value="name_desc">Tên (Z-A)</SelectItem>
                 </>
               ) : (
                 <>
-                  <option value="name_asc">Tên (A-Z)</option>
-                  <option value="name_desc">Tên (Z-A)</option>
+                  <SelectItem value="name_asc">Tên (A-Z)</SelectItem>
+                  <SelectItem value="name_desc">Tên (Z-A)</SelectItem>
                 </>
               )}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-1.5 h-3.5 w-3.5 text-muted-foreground" />
-          </div>
+            </SelectContent>
+          </Select>
           {/* Filter select */}
-          <div className="relative flex h-8 items-center gap-1.5 rounded-[5px] bg-canvas px-2.5">
-            <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <select
-              className="cursor-pointer appearance-none bg-transparent pr-5 text-sm text-foreground focus:outline-none"
-              defaultValue="all"
-            >
-              <option value="all">Tất cả</option>
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-1.5 h-3.5 w-3.5 text-muted-foreground" />
-          </div>
+          <Select defaultValue="all" items={[{ value: "all", label: "Tất cả" }]}>
+            <SelectTrigger className="h-8 w-auto min-w-[100px] gap-1.5 border-border bg-canvas px-2.5 text-sm">
+              <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tất cả</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Rows */}
@@ -381,7 +395,7 @@ function FriendRow({ thread, mediaCache, onSelectThread }: RowProps) {
       onClick={() => onSelectThread(thread.id)}
       className="group flex h-14 cursor-pointer items-center gap-3 px-4 hover:bg-foreground/5"
     >
-      <Avatar
+      <UserAvatar
         id={thread.id}
         name={thread.name}
         avatarUrl={thread.avatar}
@@ -411,7 +425,7 @@ function GroupRow({ thread, mediaCache, onSelectThread }: RowProps) {
       onClick={() => onSelectThread(thread.id)}
       className="group flex h-[60px] cursor-pointer items-center gap-3 px-4 hover:bg-foreground/5"
     >
-      <Avatar
+      <UserAvatar
         id={thread.id}
         name={thread.name}
         avatarUrl={thread.avatar}
@@ -472,10 +486,10 @@ interface FriendRequestCardProps {
 
 function FriendRequestCard({ thread, mediaCache }: FriendRequestCardProps) {
   return (
-    <div className="w-[397px] rounded-lg bg-card p-3">
+    <Card className="w-[397px] gap-0 p-3">
       {/* Top row: avatar + name + time + icon */}
       <div className="mb-2 flex items-start gap-3">
-        <Avatar
+        <UserAvatar
           id={thread.id}
           name={thread.name}
           avatarUrl={thread.avatar}
@@ -499,22 +513,22 @@ function FriendRequestCard({ thread, mediaCache }: FriendRequestCardProps) {
 
       {/* Action buttons */}
       <div className="flex gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          className="h-8 flex-1"
           onClick={() => void ipc.rejectFriend(thread.id, thread.name)}
-          className="flex h-8 flex-1 cursor-pointer items-center justify-center rounded-[6px] bg-secondary text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80"
         >
           Từ chối
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="default"
+          className="h-8 flex-1"
           onClick={() => void ipc.acceptFriend(thread.id, thread.name)}
-          className="flex h-8 flex-1 cursor-pointer items-center justify-center rounded-[6px] bg-primary text-sm font-medium text-white transition-colors hover:bg-primary/90 dark:bg-[#00378a] dark:text-[#66a6ff] dark:hover:bg-primary dark:hover:text-white"
         >
           Đồng ý
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 

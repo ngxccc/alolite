@@ -1,6 +1,6 @@
 import { Trash2 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
-import { Avatar } from "@/shared/ui/avatar";
+import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { useAuthStore, useMediaCacheStore, useUIStore } from "@/stores";
@@ -21,7 +21,7 @@ export function AccountTab() {
       <SettingCard>
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <Avatar
+            <UserAvatar
               id={uin || "self"}
               name={displayName || "Me"}
               avatarUrl={avatar}
@@ -71,7 +71,7 @@ export function AccountTab() {
               <RowDivider />
               <div className="flex items-center justify-between px-4 py-2.5">
                 <div className="flex items-center gap-2.5">
-                  <Avatar
+                  <UserAvatar
                     id={acc.uin}
                     name={acc.display_name}
                     avatarUrl={acc.avatar}

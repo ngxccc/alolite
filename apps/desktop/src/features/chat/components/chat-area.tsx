@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
-import { cn } from "@/shared/utils/cn";
+import { cn } from "cn";
 import { dayKey, matchesVnQuery } from "@/shared/utils/text";
 import { ChatMessageList } from "@/shared/ui/chat";
 import { useChatStore, useContactsStore, useUIStore } from "@/stores";
