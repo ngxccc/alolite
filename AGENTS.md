@@ -7,7 +7,7 @@ Operating guide for AI agents and humans working in this repository.
 `alolite` is a lightweight native desktop messaging client organized as a clean Cargo workspace (`alolite-core` + `alolite-cli` + `apps/desktop` Tauri v2 + TypeScript), zero Node.js runtime, zero Electron/Chromium.
 
 - Repository: <https://github.com/ngxccc/alolite>
-- Rust 1.99+ / edition 2021
+- Rust 1.100+ / edition 2021
 - All documentation (`docs/`, `README.md`, `docs/standards/`) is written completely in English.
 
 ## Commands
