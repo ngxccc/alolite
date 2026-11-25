@@ -27,18 +27,9 @@ import { Avatar } from "@/shared/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils/cn";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
-import { useAuthStore } from "@/stores/use-auth-store";
-import { useChatStore } from "@/stores/use-chat-store";
-import { useUIStore } from "@/stores/use-ui-store";
+import { useAuthStore, useChatStore, useMediaCacheStore, useUIStore } from "@/stores";
 import type { AppSettings } from "@/shared/types/ipc.generated";
 import { threadUnreadCount } from "@/features/threads/utils/threads";
-
-interface NavRailProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
 
 // ─── Shared rail button ───────────────────────────────────────────────────────
 
@@ -99,20 +90,14 @@ const dmSubContentCls =
 
 // ─── Settings popup menu ──────────────────────────────────────────────────────
 
-function SettingsMenu({
-  state: propState,
-  dispatch: propDispatch,
-  isDark,
-}: {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-  isDark: boolean;
-}) {
-  const storeSettings = useChatStore((s) => s.settings);
-  const settings = propState?.settings ?? storeSettings;
-  const dispatch = propDispatch ?? useAppStore.getState().dispatch;
-  const storeDevMode = useUIStore((s) => s.devMode);
-  const devMode = propState?.devMode ?? storeDevMode;
+function SettingsMenu({ isDark }: { isDark: boolean }) {
+  const settings = useChatStore((s) => s.settings);
+  const setSettings = useChatStore((s) => s.setSettings);
+  const setIsSyncing = useChatStore((s) => s.setIsSyncing);
+  const devMode = useUIStore((s) => s.devMode);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const setPhoneSyncOpen = useUIStore((s) => s.setPhoneSyncOpen);
+  const setDevToolsOpen = useUIStore((s) => s.setDevToolsOpen);
   const [open, setOpen] = useState(false);
   const toggleTheme = () => {
     if (!settings) return;
@@ -120,7 +105,7 @@ function SettingsMenu({
       ...settings,
       theme_mode: isDark ? "light" : "dark",
     };
-    dispatch({ type: "UPDATE_SETTINGS_LOCAL", settings: next });
+    setSettings(next);
     void ipc.saveSettings(next);
   };
 
@@ -155,7 +140,7 @@ function SettingsMenu({
           {/* Account information */}
           <DropdownMenuPrimitive.Item
             className={dmItemCls}
-            onSelect={() => dispatch({ type: "OPEN_SETTINGS", open: true, tab: "account" })}
+            onSelect={() => setSettingsOpen(true, "account")}
           >
             <User className="h-4 w-4 shrink-0 opacity-70" />
             Thông tin tài khoản
@@ -164,7 +149,7 @@ function SettingsMenu({
           {/* General settings */}
           <DropdownMenuPrimitive.Item
             className={dmItemCls}
-            onSelect={() => dispatch({ type: "OPEN_SETTINGS", open: true, tab: "general" })}
+            onSelect={() => setSettingsOpen(true, "general")}
           >
             <Settings className="h-4 w-4 shrink-0 opacity-70" />
             Cài đặt
@@ -184,14 +169,14 @@ function SettingsMenu({
               <DropdownMenuPrimitive.SubContent sideOffset={4} className={dmSubContentCls}>
                 <DropdownMenuPrimitive.Item
                   className={dmItemCls}
-                  onSelect={() => dispatch({ type: "START_CLOUD_SYNC" })}
+                  onSelect={() => setIsSyncing(true)}
                 >
                   <Cloud className="h-4 w-4 shrink-0 opacity-60" />
                   Đồng bộ zCloud
                 </DropdownMenuPrimitive.Item>
                 <DropdownMenuPrimitive.Item
                   className={dmItemCls}
-                  onSelect={() => dispatch({ type: "SET_PHONE_SYNC_MODAL", open: true })}
+                  onSelect={() => setPhoneSyncOpen(true)}
                 >
                   <Smartphone className="h-4 w-4 shrink-0 opacity-60" />
                   Đồng bộ tin nhắn từ điện thoại
@@ -251,7 +236,7 @@ function SettingsMenu({
           {devMode && (
             <DropdownMenuPrimitive.Item
               className={dmItemCls}
-              onSelect={() => dispatch({ type: "SET_DEV_MODAL", open: true })}
+              onSelect={() => setDevToolsOpen(true)}
             >
               <Bug className="h-4 w-4 shrink-0 opacity-60" />
               Công cụ nhà phát triển
@@ -323,8 +308,11 @@ function ToolItemBtn({ item }: { item: ToolItemDef }) {
   );
 }
 
-function ToolsPopover({ dispatch }: { dispatch: (action: AppAction) => void; isDark: boolean }) {
+function ToolsPopover() {
   const [open, setOpen] = useState(false);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const setActiveSection = useUIStore((s) => s.setActiveSection);
+  const toggleFilterStarredOnly = useChatStore((s) => s.toggleFilterStarredOnly);
 
   const tools: ToolItemDef[] = [
     {
@@ -333,7 +321,7 @@ function ToolsPopover({ dispatch }: { dispatch: (action: AppAction) => void; isD
       label: "Tin nhắn nhanh",
       onSelect: () => {
         setOpen(false);
-        dispatch({ type: "OPEN_SETTINGS", open: true, tab: "messages" });
+        setSettingsOpen(true, "messages");
       },
     },
     {
@@ -356,8 +344,8 @@ function ToolsPopover({ dispatch }: { dispatch: (action: AppAction) => void; isD
       label: "Tin nhắn gắn sao",
       onSelect: () => {
         setOpen(false);
-        dispatch({ type: "SET_NAV_SECTION", section: "chat" });
-        dispatch({ type: "TOGGLE_STARRED_FILTER" });
+        setActiveSection("chat");
+        toggleFilterStarredOnly();
       },
     },
     {
@@ -408,23 +396,21 @@ function ToolsPopover({ dispatch }: { dispatch: (action: AppAction) => void; isD
 
 // ─── Main NavRail ─────────────────────────────────────────────────────────────
 
-export function NavRail({ state: propState, dispatch: propDispatch }: NavRailProps = {}) {
-  const storeDispatch = useAppStore.getState().dispatch;
-  const dispatch = propDispatch ?? storeDispatch;
-
-  const auth = useAuthStore();
-  const chat = useChatStore();
-  const ui = useUIStore();
-  const appStore = useAppStore();
-
-  const uin = propState?.uin ?? auth.uin;
-  const displayName = propState?.displayName ?? auth.displayName;
-  const avatar = propState?.avatar ?? auth.avatar;
-  const mediaCache = propState?.mediaCache ?? appStore.mediaCache;
-  const activeSection = propState?.activeSection ?? ui.activeSection;
-  const threads = propState?.threads ?? chat.threads;
-  const unreadCounts = propState?.unreadCounts ?? chat.unreadCounts;
-  const settings = propState?.settings ?? chat.settings;
+export function NavRail() {
+  const uin = useAuthStore((s) => s.uin);
+  const displayName = useAuthStore((s) => s.displayName);
+  const avatar = useAuthStore((s) => s.avatar);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+  const activeSection = useUIStore((s) => s.activeSection);
+  const setActiveSection = useUIStore((s) => s.setActiveSection);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
+  const showToast = useUIStore((s) => s.showToast);
+  const threads = useChatStore((s) => s.threads);
+  const unreadCounts = useChatStore((s) => s.unreadCounts);
+  const settings = useChatStore((s) => s.settings);
+  const selectThread = useChatStore((s) => s.selectThread);
+  const setIsSyncing = useChatStore((s) => s.setIsSyncing);
 
   const totalUnread = threads.reduce((sum, t) => sum + threadUnreadCount(t, unreadCounts), 0);
   const isDark = (settings?.theme_mode ?? "dark") !== "light";
@@ -432,9 +418,11 @@ export function NavRail({ state: propState, dispatch: propDispatch }: NavRailPro
   const openCloudThread = () => {
     const cloud = threads.find((t) => !t.is_group && t.name.includes("Cloud của tôi"));
     if (cloud) {
-      dispatch({ type: "SELECT_THREAD", threadId: cloud.id });
+      setActiveSection("chat");
+      setInChatSearchOpen(false);
+      selectThread(cloud.id);
     } else {
-      dispatch({ type: "SHOW_TOAST", message: "Chưa tìm thấy hội thoại Cloud của tôi" });
+      showToast("Chưa tìm thấy hội thoại Cloud của tôi");
     }
   };
   return (
@@ -449,7 +437,7 @@ export function NavRail({ state: propState, dispatch: propDispatch }: NavRailPro
           <TooltipTrigger asChild>
             <button
               type="button"
-              onClick={() => dispatch({ type: "OPEN_SETTINGS", open: true, tab: "account" })}
+              onClick={() => setSettingsOpen(true, "account")}
               className="relative mb-2 cursor-pointer rounded-full ring-2 ring-white/25 transition hover:ring-white/50 focus-visible:outline-none"
             >
               <Avatar
@@ -471,7 +459,7 @@ export function NavRail({ state: propState, dispatch: propDispatch }: NavRailPro
           active={activeSection === "chat"}
           isDark={isDark}
           label="Tin nhắn"
-          onClick={() => dispatch({ type: "SET_NAV_SECTION", section: "chat" })}
+          onClick={() => setActiveSection("chat")}
           badge={totalUnread}
         >
           <MessageSquare className="h-6 w-6" strokeWidth={activeSection === "chat" ? 2.5 : 1.75} />
@@ -482,7 +470,7 @@ export function NavRail({ state: propState, dispatch: propDispatch }: NavRailPro
           active={activeSection === "contacts"}
           isDark={isDark}
           label="Danh bạ"
-          onClick={() => dispatch({ type: "SET_NAV_SECTION", section: "contacts" })}
+          onClick={() => setActiveSection("contacts")}
         >
           <Users className="h-6 w-6" strokeWidth={activeSection === "contacts" ? 2.5 : 1.75} />
         </RailBtn>
@@ -491,11 +479,7 @@ export function NavRail({ state: propState, dispatch: propDispatch }: NavRailPro
       {/* ── Bottom group: utility / settings buttons ── */}
       <div className="flex flex-col items-center gap-1 pb-0.5">
         {/* zCloud – trigger cloud sync */}
-        <RailBtn
-          isDark={isDark}
-          label="zCloud"
-          onClick={() => dispatch({ type: "START_CLOUD_SYNC" })}
-        >
+        <RailBtn isDark={isDark} label="zCloud" onClick={() => setIsSyncing(true)}>
           <Cloud className="h-6 w-6" />
         </RailBtn>
 
@@ -505,10 +489,10 @@ export function NavRail({ state: propState, dispatch: propDispatch }: NavRailPro
         </RailBtn>
 
         {/* zBusiness Tools popover */}
-        <ToolsPopover dispatch={dispatch} isDark={isDark} />
+        <ToolsPopover />
 
         {/* Settings dropdown */}
-        <SettingsMenu state={propState} dispatch={dispatch} isDark={isDark} />
+        <SettingsMenu isDark={isDark} />
       </div>
     </aside>
   );

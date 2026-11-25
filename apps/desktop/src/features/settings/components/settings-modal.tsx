@@ -16,8 +16,7 @@ import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { AppSettings } from "@/shared/types/ipc.generated";
 import { Dialog, DialogContent, DialogTitle } from "@/shared/ui/dialog";
 import { cn } from "@/shared/utils/cn";
-import type { SettingsTab } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useAuthStore, useChatStore, useUIStore, type SettingsTab } from "@/stores";
 import {
   AccountTab,
   AppearanceTab,
@@ -29,9 +28,7 @@ import {
   UpdateTab,
   UtilitiesTab,
 } from "./tabs";
-import type { SettingsModalProps, SettingsTabProps } from "./types";
-
-export type { SettingsModalProps };
+import type { SettingsTabProps } from "./types";
 
 const SETTINGS_TABS: {
   id: SettingsTab;
@@ -61,40 +58,33 @@ const TAB_COMPONENTS: Record<SettingsTab, React.ComponentType<SettingsTabProps>>
   update: UpdateTab,
 };
 
-export function SettingsModal({
-  state: propState,
-  dispatch: propDispatch,
-}: SettingsModalProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function SettingsModal() {
+  const settingsOpen = useUIStore((s) => s.settingsOpen);
+  const activeSettingsTab = useUIStore((s) => s.activeSettingsTab);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const settings = useChatStore((s) => s.settings);
+  const setSettings = useChatStore((s) => s.setSettings);
+  const setSavedAccounts = useAuthStore((s) => s.setSavedAccounts);
+
   useEffect(() => {
-    if (!state.settingsModalOpen || !isTauriRuntime()) return;
-    if (state.settingsTab === "account") {
-      void ipc
-        .listSavedAccounts()
-        .then((accounts) => dispatch({ type: "SET_SAVED_ACCOUNTS", accounts }));
+    if (!settingsOpen || !isTauriRuntime()) return;
+    if (activeSettingsTab === "account") {
+      void ipc.listSavedAccounts().then((accounts) => setSavedAccounts(accounts));
     }
-  }, [state.settingsModalOpen, state.settingsTab, dispatch]);
+  }, [settingsOpen, activeSettingsTab, setSavedAccounts]);
 
-  if (!state.settingsModalOpen || !state.settings) return null;
-
-  const settings = state.settings;
-  const tab = state.settingsTab;
+  if (!settingsOpen || !settings) return null;
 
   const updateSettings = (patch: Partial<AppSettings>) => {
     const next: AppSettings = { ...settings, ...patch };
-    dispatch({ type: "UPDATE_SETTINGS_LOCAL", settings: next });
+    setSettings(next);
     void ipc.saveSettings(next);
   };
 
-  const ActiveTabContent = TAB_COMPONENTS[tab];
+  const ActiveTabContent = TAB_COMPONENTS[activeSettingsTab];
 
   return (
-    <Dialog
-      open={state.settingsModalOpen}
-      onOpenChange={(open) => !open && dispatch({ type: "OPEN_SETTINGS", open: false })}
-    >
+    <Dialog open={settingsOpen} onOpenChange={(open) => !open && setSettingsOpen(false)}>
       {/* 653x652 dialog, radius-lg (8px), no default padding */}
       <DialogContent
         className="flex h-[652px] w-[653px] max-w-[653px] flex-row overflow-hidden rounded-lg p-0"
@@ -108,12 +98,12 @@ export function SettingsModal({
 
           {SETTINGS_TABS.map((item) => {
             const Icon = item.icon;
-            const active = tab === item.id;
+            const active = activeSettingsTab === item.id;
             return (
               <button
                 key={item.id}
                 type="button"
-                onClick={() => dispatch({ type: "OPEN_SETTINGS", open: true, tab: item.id })}
+                onClick={() => setSettingsOpen(true, item.id)}
                 className={cn(
                   "flex h-9 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-normal transition-colors",
                   active ? "bg-accent text-foreground" : "text-foreground hover:bg-white/[0.05]",
@@ -131,19 +121,14 @@ export function SettingsModal({
           {/* Close X */}
           <button
             type="button"
-            onClick={() => dispatch({ type: "OPEN_SETTINGS", open: false })}
+            onClick={() => setSettingsOpen(false)}
             className="absolute top-3 right-3 z-10 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
           >
             <X className="h-[18px] w-[18px]" />
           </button>
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
-            <ActiveTabContent
-              state={state}
-              settings={settings}
-              dispatch={dispatch}
-              updateSettings={updateSettings}
-            />
+            <ActiveTabContent settings={settings} updateSettings={updateSettings} />
           </div>
         </div>
       </DialogContent>

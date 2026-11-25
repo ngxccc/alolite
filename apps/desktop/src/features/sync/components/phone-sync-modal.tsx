@@ -2,28 +2,24 @@ import { FolderOpen, RefreshCw, Square } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Button } from "@/shared/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/shared/ui/dialog";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useChatStore, useUIStore } from "@/stores";
 
-interface PhoneSyncModalProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
+export function PhoneSyncModal() {
+  const phoneSyncOpen = useUIStore((s) => s.phoneSyncOpen);
+  const setPhoneSyncOpen = useUIStore((s) => s.setPhoneSyncOpen);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const phoneSyncRunning = useChatStore((s) => s.phoneSyncRunning);
+  const phoneSyncProgress = useChatStore((s) => s.phoneSyncProgress);
+  const setPhoneSyncRunning = useChatStore((s) => s.setPhoneSyncRunning);
+  const setPhoneSyncProgress = useChatStore((s) => s.setPhoneSyncProgress);
 
-export function PhoneSyncModal({
-  state: propState,
-  dispatch: propDispatch,
-}: PhoneSyncModalProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
-  if (!state.phoneSyncModalOpen) return null;
+  if (!phoneSyncOpen) return null;
+
+  const progressRatio = phoneSyncProgress?.current ?? 0;
+  const progressStatus = phoneSyncProgress?.stage ?? "";
 
   return (
-    <Dialog
-      open={state.phoneSyncModalOpen}
-      onOpenChange={(open) => !open && dispatch({ type: "SET_PHONE_SYNC_MODAL", open: false })}
-    >
+    <Dialog open={phoneSyncOpen} onOpenChange={(open) => !open && setPhoneSyncOpen(false)}>
       <DialogContent className="w-[480px] max-w-[480px] rounded-lg p-0">
         {/* Header */}
         <div className="border-b border-border px-5 py-4">
@@ -47,20 +43,20 @@ export function PhoneSyncModal({
             </div>
           </div>
 
-          {state.phoneSyncRunning ? (
+          {phoneSyncRunning ? (
             <div className="flex flex-col gap-2">
               <div className="h-2 overflow-hidden rounded-full bg-muted">
                 <div
                   style={{
-                    width: `${Math.round(Math.max(0.05, Math.min(1, state.phoneSyncProgress)) * 100)}%`,
+                    width: `${Math.round(Math.max(0.05, Math.min(1, progressRatio)) * 100)}%`,
                   }}
                   className="h-full bg-primary transition-all duration-200"
                 />
               </div>
-              <div className="text-xs text-muted-foreground">{state.phoneSyncStatus}</div>
+              <div className="text-xs text-muted-foreground">{progressStatus}</div>
             </div>
-          ) : state.phoneSyncStatus ? (
-            <div className="text-xs text-muted-foreground">{state.phoneSyncStatus}</div>
+          ) : progressStatus ? (
+            <div className="text-xs text-muted-foreground">{progressStatus}</div>
           ) : null}
         </div>
 
@@ -70,14 +66,14 @@ export function PhoneSyncModal({
             variant="secondary"
             className="h-8 rounded-md px-4 text-sm"
             onClick={() => {
-              dispatch({ type: "SET_PHONE_SYNC_MODAL", open: false });
-              dispatch({ type: "OPEN_SETTINGS", open: true, tab: "sync" });
+              setPhoneSyncOpen(false);
+              setSettingsOpen(true, "sync");
             }}
           >
             <FolderOpen className="h-3.5 w-3.5" /> Nhập từ file cục bộ
           </Button>
 
-          {state.phoneSyncRunning ? (
+          {phoneSyncRunning ? (
             <Button
               variant="destructive"
               className="h-8 rounded-md px-4 text-sm"
@@ -90,7 +86,12 @@ export function PhoneSyncModal({
               variant="default"
               className="h-8 rounded-md px-4 text-sm"
               onClick={() => {
-                dispatch({ type: "START_PHONE_SYNC" });
+                setPhoneSyncRunning(true);
+                setPhoneSyncProgress({
+                  current: 0.05,
+                  total: 100,
+                  stage: "Đang gửi yêu cầu đồng bộ tin nhắn tới điện thoại…",
+                });
                 void ipc.syncPhoneMessages(true);
               }}
             >

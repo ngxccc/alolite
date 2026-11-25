@@ -7,21 +7,11 @@ import { Button } from "@/shared/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { cn } from "@/shared/utils/cn";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useUIStore } from "@/stores";
 
-interface DevToolsModalProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
-
-export function DevToolsModal({
-  state: propState,
-  dispatch: propDispatch,
-}: DevToolsModalProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function DevToolsModal() {
+  const devToolsOpen = useUIStore((s) => s.devToolsOpen);
+  const setDevToolsOpen = useUIStore((s) => s.setDevToolsOpen);
   const [tab, setTab] = useState<"logs" | "scanner" | "crypto">("logs");
   const [diag, setDiag] = useState<DevDiagnosticsSnapshot | null>(null);
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
@@ -33,18 +23,15 @@ export function DevToolsModal({
   };
 
   useEffect(() => {
-    if (state.devModalOpen) {
+    if (devToolsOpen) {
       void load();
     }
-  }, [state.devModalOpen]);
+  }, [devToolsOpen]);
 
-  if (!state.devModalOpen) return null;
+  if (!devToolsOpen) return null;
 
   return (
-    <Dialog
-      open={state.devModalOpen}
-      onOpenChange={(open) => !open && dispatch({ type: "SET_DEV_MODAL", open: false })}
-    >
+    <Dialog open={devToolsOpen} onOpenChange={(open) => !open && setDevToolsOpen(false)}>
       <DialogContent className="h-[560px] max-w-4xl">
         <DialogHeader className="pr-10">
           <DialogTitle>

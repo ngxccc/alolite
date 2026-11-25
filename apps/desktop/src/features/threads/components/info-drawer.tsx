@@ -20,15 +20,9 @@ import { Avatar } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/utils/cn";
 import { jxlToJpgUrl } from "@/shared/utils/text";
-import type { AppAction, AppState } from "@/app/store/app-reducer";
-import { useAppStore } from "@/app/store/use-app-store";
+import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import { isPhotoMessage } from "@/features/chat/utils/messages";
 import { isThreadMuted, threadMemberCount } from "@/features/threads/utils/threads";
-
-interface InfoDrawerProps {
-  state?: AppState;
-  dispatch?: (action: AppAction) => void;
-}
 
 /** 8-px bg-canvas band that separates sections visually */
 function SectionBand() {
@@ -75,25 +69,34 @@ function ViewAllButton({ onClick }: { onClick?: () => void }) {
   );
 }
 
-export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDrawerProps = {}) {
-  const appStore = useAppStore();
-  const state = propState ?? appStore;
-  const dispatch = propDispatch ?? appStore.dispatch;
+export function InfoDrawer() {
+  const threads = useChatStore((s) => s.threads);
+  const selectedThreadId = useChatStore((s) => s.selectedThreadId);
+  const infoDrawerOpen = useChatStore((s) => s.infoDrawerOpen);
+  const settings = useChatStore((s) => s.settings);
+  const setSettings = useChatStore((s) => s.setSettings);
+  const friendStatusMap = useContactsStore((s) => s.friendStatusByUid);
+  const userOnlineMap = useContactsStore((s) => s.userOnlineMap);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const setImageViewerState = useUIStore((s) => s.setImageViewerState);
+
   const [membersExpanded, setMembersExpanded] = useState(true);
   const [boardExpanded, setBoardExpanded] = useState(true);
   const [photosExpanded, setPhotosExpanded] = useState(true);
   const [fileExpanded, setFileExpanded] = useState(true);
   const [linkExpanded, setLinkExpanded] = useState(true);
 
-  const thread = state.threads.find((t) => t.id === state.selectedThreadId);
-  if (!state.infoDrawerOpen || !thread) return null;
+  const thread = threads.find((t) => t.id === selectedThreadId);
+  if (!infoDrawerOpen || !thread) return null;
 
   const isCloud = thread.name.includes("Cloud của tôi");
-  const friendStatus = state.friendStatusMap[thread.id] ?? "Unknown";
-  const online = state.userOnlineMap[thread.id];
-  const muted = state.settings ? isThreadMuted(thread, state.settings) : false;
+  const friendStatus = friendStatusMap[thread.id] ?? "Unknown";
+  const online = userOnlineMap[thread.id];
+  const muted = settings ? isThreadMuted(thread, settings) : false;
   const pinned =
-    thread.presentation.pinned || (state.settings?.pinned_threads.includes(thread.id) ?? false);
+    thread.presentation.pinned || (settings?.pinned_threads.includes(thread.id) ?? false);
   const memberCount = threadMemberCount(thread);
 
   const sharedPhotos = thread.messages
@@ -102,36 +105,30 @@ export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDra
     .toReversed();
 
   const handleTogglePin = () => {
-    if (state.settings) {
+    if (settings) {
       const nextPinned = pinned
-        ? state.settings.pinned_threads.filter((id) => id !== thread.id)
-        : [...state.settings.pinned_threads, thread.id];
+        ? settings.pinned_threads.filter((id) => id !== thread.id)
+        : [...settings.pinned_threads, thread.id];
       const nextSettings = {
-        ...state.settings,
+        ...settings,
         pinned_threads: nextPinned,
       };
-      dispatch({
-        type: "UPDATE_SETTINGS_LOCAL",
-        settings: nextSettings,
-      });
+      setSettings(nextSettings);
       void ipc.saveSettings(nextSettings);
     }
     void ipc.pinThread(thread.id, thread.is_group, !pinned);
   };
 
   const handleToggleMute = () => {
-    if (state.settings) {
-      const nextMuted = { ...state.settings.muted_threads };
+    if (settings) {
+      const nextMuted = { ...settings.muted_threads };
       if (muted) delete nextMuted[thread.id];
       else nextMuted[thread.id] = -1;
       const nextSettings = {
-        ...state.settings,
+        ...settings,
         muted_threads: nextMuted,
       };
-      dispatch({
-        type: "UPDATE_SETTINGS_LOCAL",
-        settings: nextSettings,
-      });
+      setSettings(nextSettings);
       void ipc.saveSettings(nextSettings);
     }
     void ipc.muteThread(thread.id, thread.is_group, muted ? 0 : -1, !muted);
@@ -191,12 +188,12 @@ export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDra
       <ActionBtn
         icon={<UserPlus className="h-5 w-5" />}
         label="Thêm thành viên"
-        onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: true })}
+        onClick={() => setPhoneLookupOpen(true)}
       />
       <ActionBtn
         icon={<Shield className="h-5 w-5" />}
         label="Quản lý nhóm"
-        onClick={() => dispatch({ type: "OPEN_SETTINGS", open: true, tab: "general" })}
+        onClick={() => setSettingsOpen(true, "general")}
       />
     </div>
   ) : (
@@ -217,7 +214,7 @@ export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDra
       <ActionBtn
         icon={<Users className="h-5 w-5" />}
         label="Tạo nhóm trò chuyện"
-        onClick={() => dispatch({ type: "SET_PHONE_MODAL", open: true })}
+        onClick={() => setPhoneLookupOpen(true)}
       />
     </div>
   );
@@ -240,7 +237,7 @@ export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDra
           isGroup={thread.is_group}
           memberCount={thread.is_group ? threadMemberCount(thread) : undefined}
           size={56}
-          mediaCache={state.mediaCache}
+          mediaCache={mediaCache}
         />
         <div className="mt-2 flex items-center gap-1.5">
           <span className="max-w-[220px] truncate text-lg font-medium text-foreground">
@@ -345,7 +342,7 @@ export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDra
                           name={m.name}
                           avatarUrl={m.avatar}
                           size={32}
-                          mediaCache={state.mediaCache}
+                          mediaCache={mediaCache}
                         />
                         <span className="truncate text-sm text-foreground">{m.name || m.id}</span>
                       </div>
@@ -420,20 +417,17 @@ export function InfoDrawer({ state: propState, dispatch: propDispatch }: InfoDra
                     const key = `img_${m.id || m.ts}`;
                     const fullUrl = m.link_url ?? m.link_thumb ?? "";
                     const thumbSrc =
-                      state.mediaCache[key] ?? jxlToJpgUrl(m.link_thumb ?? m.link_url ?? "");
+                      mediaCache[key] ?? jxlToJpgUrl(m.link_thumb ?? m.link_url ?? "");
                     return (
                       <div
                         key={key}
                         onClick={() =>
-                          dispatch({
-                            type: "SET_IMAGE_VIEWER",
-                            viewer: {
-                              texKey: key,
-                              fullUrl,
-                              title: m.link_title || "Hình ảnh",
-                              sender: m.sender,
-                              time: m.time,
-                            },
+                          setImageViewerState({
+                            texKey: key,
+                            fullUrl,
+                            title: m.link_title || "Hình ảnh",
+                            sender: m.sender,
+                            time: m.time,
                           })
                         }
                         className="h-[60px] cursor-pointer overflow-hidden rounded bg-muted text-xs text-muted-foreground hover:opacity-90"

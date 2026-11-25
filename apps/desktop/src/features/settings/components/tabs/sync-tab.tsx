@@ -3,10 +3,17 @@ import { RefreshCw, Trash2 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { useChatStore, useUIStore } from "@/stores";
 import { SectionHeading, SettingCard } from "../primitives";
-import type { SettingsTabProps } from "../types";
 
-export function SyncTab({ state, dispatch }: SettingsTabProps) {
+export function SyncTab() {
+  const activeDbPath = useUIStore((s) => s.activeDbPath);
+  const setPhoneSyncOpen = useUIStore((s) => s.setPhoneSyncOpen);
+  const setWipeConfirmOpen = useUIStore((s) => s.setWipeConfirmOpen);
+  const showToast = useUIStore((s) => s.showToast);
+  const isSyncing = useChatStore((s) => s.isSyncing);
+  const setIsSyncing = useChatStore((s) => s.setIsSyncing);
+  const threads = useChatStore((s) => s.threads);
   const [migratePath, setMigratePath] = useState("");
 
   return (
@@ -61,19 +68,13 @@ export function SyncTab({ state, dispatch }: SettingsTabProps) {
         <div className="px-4 py-3">
           <div className="mb-2 text-xs text-muted-foreground">
             CSDL đang dùng:{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 text-foreground">
-              {state.activeDbPath}
-            </code>
+            <code className="rounded bg-muted px-1.5 py-0.5 text-foreground">{activeDbPath}</code>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => dispatch({ type: "SET_PHONE_SYNC_MODAL", open: true })}
-            >
+            <Button variant="default" size="sm" onClick={() => setPhoneSyncOpen(true)}>
               Đồng bộ từ điện thoại
             </Button>
-            {state.syncRunning ? (
+            {isSyncing ? (
               <Button variant="destructive" size="sm" onClick={() => void ipc.cancelCloudSync()}>
                 Dừng đồng bộ Nhóm/Cloud
               </Button>
@@ -82,10 +83,10 @@ export function SyncTab({ state, dispatch }: SettingsTabProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const targets = state.threads
+                  const targets = threads
                     .filter((t) => t.is_group || t.name.includes("Cloud của tôi"))
                     .map<[string, string, boolean]>((t) => [t.id, t.name, t.is_group]);
-                  dispatch({ type: "START_CLOUD_SYNC" });
+                  setIsSyncing(true);
                   void ipc.syncHistory(targets);
                 }}
               >
@@ -123,7 +124,7 @@ export function SyncTab({ state, dispatch }: SettingsTabProps) {
                 try {
                   await ipc.importLocalHistory(migratePath.trim());
                 } catch (e) {
-                  dispatch({ type: "SHOW_TOAST", message: String(e) });
+                  showToast(String(e), "error");
                 }
               }}
             >
@@ -138,7 +139,7 @@ export function SyncTab({ state, dispatch }: SettingsTabProps) {
               try {
                 await ipc.autoDetectImportHistory();
               } catch (e) {
-                dispatch({ type: "SHOW_TOAST", message: String(e) });
+                showToast(String(e), "error");
               }
             }}
           >
@@ -156,11 +157,7 @@ export function SyncTab({ state, dispatch }: SettingsTabProps) {
               Giữ nguyên phiên đăng nhập session.json.
             </div>
           </div>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => dispatch({ type: "SET_WIPE_CONFIRM", open: true })}
-          >
+          <Button variant="destructive" size="sm" onClick={() => setWipeConfirmOpen(true)}>
             <Trash2 className="h-3.5 w-3.5" /> Xóa dữ liệu
           </Button>
         </div>

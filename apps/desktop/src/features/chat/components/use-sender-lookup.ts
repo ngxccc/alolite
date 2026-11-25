@@ -1,5 +1,5 @@
 import type { ChatMessage, Thread } from "@/shared/types/ipc.generated";
-import type { AppState } from "@/app/store/app-reducer";
+import { useAuthStore, useChatStore } from "@/stores";
 
 export interface ResolvedSender {
   id: string;
@@ -12,21 +12,25 @@ export function isNumericUid(val: string): boolean {
   return trimmed.length >= 6 && /^\d+$/.test(trimmed);
 }
 
-export function useSenderLookup(state: AppState) {
+export function useSenderLookup() {
+  const uin = useAuthStore((s) => s.uin);
+  const displayName = useAuthStore((s) => s.displayName);
+  const avatar = useAuthStore((s) => s.avatar);
+  const threads = useChatStore((s) => s.threads);
   const byId = new Map<string, { id: string; name: string; avatar?: string | null }>();
   const byName = new Map<string, { id: string; name: string; avatar?: string | null }>();
 
-  if (state.uin) {
+  if (uin) {
     const me = {
-      id: state.uin,
-      name: state.displayName || "Tôi",
-      avatar: state.avatar,
+      id: uin,
+      name: displayName || "Tôi",
+      avatar,
     };
-    byId.set(state.uin, me);
-    if (state.displayName) byName.set(state.displayName, me);
+    byId.set(uin, me);
+    if (displayName) byName.set(displayName, me);
   }
 
-  for (const t of state.threads) {
+  for (const t of threads) {
     if (!t.is_group) {
       const entry = { id: t.id, name: t.name, avatar: t.avatar };
       byId.set(t.id, entry);

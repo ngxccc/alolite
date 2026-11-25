@@ -3,10 +3,18 @@ import { ipc } from "@/shared/api/ipc";
 import { Avatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { useAuthStore, useMediaCacheStore, useUIStore } from "@/stores";
 import { RowDivider, SectionHeading, SettingCard } from "../primitives";
-import type { SettingsTabProps } from "../types";
 
-export function AccountTab({ state, dispatch }: SettingsTabProps) {
+export function AccountTab() {
+  const uin = useAuthStore((s) => s.uin);
+  const displayName = useAuthStore((s) => s.displayName);
+  const avatar = useAuthStore((s) => s.avatar);
+  const savedAccounts = useAuthStore((s) => s.savedAccounts);
+  const setSavedAccounts = useAuthStore((s) => s.setSavedAccounts);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const mediaCache = useMediaCacheStore((s) => s.mediaCache);
+
   return (
     <>
       <SectionHeading>Tài khoản hiện tại</SectionHeading>
@@ -14,18 +22,18 @@ export function AccountTab({ state, dispatch }: SettingsTabProps) {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
             <Avatar
-              id={state.uin || "self"}
-              name={state.displayName || "Me"}
-              avatarUrl={state.avatar}
+              id={uin || "self"}
+              name={displayName || "Me"}
+              avatarUrl={avatar}
               size={44}
-              mediaCache={state.mediaCache}
+              mediaCache={mediaCache}
             />
             <div>
               <div className="text-sm font-medium text-foreground">
-                {state.displayName || "Người dùng Zalo"}
+                {displayName || "Người dùng Zalo"}
               </div>
               <div className="text-xs text-muted-foreground">
-                {state.uin ? `UIN: ${state.uin}` : "Đang hoạt động"}
+                {uin ? `UIN: ${uin}` : "Đang hoạt động"}
               </div>
             </div>
           </div>
@@ -43,14 +51,14 @@ export function AccountTab({ state, dispatch }: SettingsTabProps) {
             variant="default"
             size="sm"
             onClick={() => {
-              dispatch({ type: "OPEN_SETTINGS", open: false });
+              setSettingsOpen(false);
               void ipc.addNewAccount();
             }}
           >
             + Thêm tài khoản (QR)
           </Button>
         </div>
-        {state.savedAccounts.length === 0 ? (
+        {savedAccounts.length === 0 ? (
           <>
             <RowDivider />
             <div className="px-4 py-3 text-xs text-muted-foreground">
@@ -58,7 +66,7 @@ export function AccountTab({ state, dispatch }: SettingsTabProps) {
             </div>
           </>
         ) : (
-          state.savedAccounts.map((acc) => (
+          savedAccounts.map((acc) => (
             <div key={acc.uin}>
               <RowDivider />
               <div className="flex items-center justify-between px-4 py-2.5">
@@ -68,7 +76,7 @@ export function AccountTab({ state, dispatch }: SettingsTabProps) {
                     name={acc.display_name}
                     avatarUrl={acc.avatar}
                     size={32}
-                    mediaCache={state.mediaCache}
+                    mediaCache={mediaCache}
                   />
                   <div>
                     <div className="text-sm font-medium text-foreground">{acc.display_name}</div>
@@ -93,7 +101,7 @@ export function AccountTab({ state, dispatch }: SettingsTabProps) {
                         onClick={async () => {
                           await ipc.deleteSavedAccount(acc.uin);
                           const next = await ipc.listSavedAccounts();
-                          dispatch({ type: "SET_SAVED_ACCOUNTS", accounts: next });
+                          setSavedAccounts(next);
                         }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
