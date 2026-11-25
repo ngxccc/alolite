@@ -14,7 +14,7 @@ use crate::protocol::messaging::polling::{
     get_chat_from_polling, get_cloud_messages, get_last_msgs, poll_new_messages, PollState,
 };
 use crate::protocol::messaging::threads::{
-    delete_conversation, is_generic_thread_name, set_hidden_conversation,
+    delete_conversation, fetch_pinned_topics, is_generic_thread_name, set_hidden_conversation,
     update_pinned_conversation,
 };
 use crate::protocol::messaging::unread::{
@@ -447,12 +447,34 @@ impl CoreEngine {
         }
         if is_group
             && !is_send2me
-            && (is_generic_thread_name(&t.name) || t.avatar.as_deref().unwrap_or("").is_empty())
+            && (is_generic_thread_name(&t.name)
+                || t.avatar.as_deref().unwrap_or("").is_empty()
+                || t.presentation.member_count.is_none()
+                || t.presentation.members.is_empty())
         {
             resolve_thread_names(&s, std::slice::from_mut(&mut t)).await;
         }
+        if !is_send2me {
+            match fetch_pinned_topics(&s, &group_id, is_group).await {
+                Ok(pinned) => {
+                    for m in &mut t.messages {
+                        if pinned.iter().any(|p| {
+                            (!p.id.is_empty() && p.id == m.id)
+                                || (!p.client_message_id.is_empty()
+                                    && p.client_message_id == m.client_message_id)
+                        }) {
+                            m.is_pinned = true;
+                        }
+                    }
+                    t.pinned_messages = pinned;
+                }
+                Err(e) => {
+                    crate::logger::log_error("core::fetch_pinned_topics", &e.to_string());
+                }
+            }
+        }
         let cnt = t.messages.len();
-        if !t.messages.is_empty() || !t.name.is_empty() {
+        if !t.messages.is_empty() || !t.name.is_empty() || !t.pinned_messages.is_empty() {
             let db_path = self.resolve_db_path_for_uin(uin);
             let t_save = t.clone();
             let _ = tokio::task::spawn_blocking(move || {

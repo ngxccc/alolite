@@ -176,6 +176,9 @@ pub fn merge_thread_into(
         target.avatar = incoming.avatar;
     }
     target.is_group = target.is_group || incoming.is_group;
+    if !incoming.pinned_messages.is_empty() {
+        target.pinned_messages = incoming.pinned_messages;
+    }
 
     let mut identities = MessageIdentityIndex::default();
     for (index, message) in target.messages.iter().enumerate() {

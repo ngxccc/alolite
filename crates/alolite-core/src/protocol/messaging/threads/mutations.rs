@@ -4,9 +4,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::clock::now_ms;
+use crate::clock::{message_time, now_ms};
+use crate::protocol::messaging::threads::ChatMessage;
 use crate::protocol::session::Session;
-use crate::protocol::wire::{require_login, strip_group_prefix, unwrap_data, ActionAck, WireData};
+use crate::protocol::wire::{
+    field_str, obj, require_login, strip_group_prefix, unwrap_data, ActionAck, WireData,
+};
 
 /// `/api/pinconvers/list` (cmd `12120`) payload: the pinned conversation list.
 ///
@@ -84,6 +87,107 @@ pub async fn get_pinned(s: &Session) -> Result<Vec<String>> {
                 .or_else(|| PinnedConversationWireData::from_value(&item).thread_id())
         })
         .collect())
+}
+
+fn parse_pin_topic_item(item: &Value) -> Option<ChatMessage> {
+    let params_val = match item.get("params") {
+        Some(Value::String(raw)) => serde_json::from_str::<Value>(raw).unwrap_or(Value::Null),
+        Some(v) if v.is_object() => v.clone(),
+        _ => Value::Null,
+    };
+    let lookup = |keys: &[&str]| -> Option<String> {
+        for k in keys {
+            if let Some(s) = field_str(params_val.get(*k)).or_else(|| field_str(item.get(*k))) {
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+        None
+    };
+
+    let id = lookup(&["globalMsgId", "msgId", "msg_id", "id"]).unwrap_or_default();
+    let client_message_id =
+        lookup(&["cliMsgId", "client_msg_id", "clientMsgId"]).unwrap_or_default();
+    let text = lookup(&["title", "content", "msg", "message", "description"])
+        .unwrap_or_else(|| "[Tin nhắn ghim]".to_string());
+    let sender = lookup(&["sender_name", "senderName", "dName", "creatorName"])
+        .unwrap_or_else(|| "Tin nhắn ghim".to_string());
+    let sender_id = lookup(&["sender_uid", "senderId", "creatorId", "fromUid"]);
+    let ts = params_val
+        .get("ts")
+        .or_else(|| params_val.get("time"))
+        .or_else(|| item.get("createTime"))
+        .or_else(|| item.get("ts"))
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+        .unwrap_or(0);
+    let time = if ts > 0 {
+        message_time(ts)
+    } else {
+        String::new()
+    };
+
+    if id.is_empty() && text == "[Tin nhắn ghim]" {
+        return None;
+    }
+
+    Some(ChatMessage {
+        id,
+        client_message_id,
+        sender,
+        sender_id,
+        text,
+        time,
+        ts,
+        is_pinned: true,
+        link_thumb: lookup(&["thumb"]),
+        link_url: lookup(&["href"]),
+        ..Default::default()
+    })
+}
+
+/// `GET /api/board/pin/list` (cmd `12001`, group) or `GET /api/friendboard/list` (cmd `12065`, 1:1)
+/// — fetch pinned message topics for a conversation.
+///
+/// # Errors
+/// Returns an error if unauthenticated or the HTTP call fails.
+pub async fn fetch_pinned_topics(
+    s: &Session,
+    thread_id: &str,
+    is_group: bool,
+) -> Result<Vec<ChatMessage>> {
+    require_login(s)?;
+    let (cmd_id, body) = if is_group {
+        let clean_gid = strip_group_prefix(thread_id);
+        (
+            12001,
+            obj(&[
+                ("groupId", json!(clean_gid)),
+                ("boardVersion", json!(0)),
+                ("imei", json!(s.imei)),
+            ]),
+        )
+    } else {
+        (
+            12065,
+            obj(&[("conversationId", json!(thread_id)), ("version", json!(0))]),
+        )
+    };
+    let resp = s.api_get_id(cmd_id, Some(&body)).await?;
+    let data = unwrap_data(&resp);
+    let arr = data
+        .get("items")
+        .and_then(Value::as_array)
+        .or_else(|| data.get("topics").and_then(Value::as_array))
+        .or_else(|| data.get("data").and_then(Value::as_array))
+        .or_else(|| data.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(arr.iter().filter_map(parse_pin_topic_item).collect())
 }
 
 /// Pin or unpin a conversation (`updatePinnedConversationsV2`, cmd `12122`).

@@ -20,6 +20,8 @@ pub struct Thread {
     pub is_group: bool,
     pub messages: Vec<ChatMessage>,
     #[serde(default)]
+    pub pinned_messages: Vec<ChatMessage>,
+    #[serde(default)]
     pub unread: UnreadState,
 }
 

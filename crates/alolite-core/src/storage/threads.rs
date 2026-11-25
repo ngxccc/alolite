@@ -270,6 +270,7 @@ impl MessageStore {
                     avatar: None,
                     is_group: st.is_group,
                     messages: Vec::new(),
+                    pinned_messages: Vec::new(),
                 });
             }
         }

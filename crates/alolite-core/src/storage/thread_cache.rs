@@ -58,6 +58,7 @@ pub fn save_threads_cache(threads: &[Thread]) {
             avatar: t.avatar.clone(),
             is_group: t.is_group,
             messages: t.messages[t.messages.len().saturating_sub(keep)..].to_vec(),
+            pinned_messages: t.pinned_messages.clone(),
         })
         .collect();
     if let Ok(text) = serde_json::to_string(&slim) {
