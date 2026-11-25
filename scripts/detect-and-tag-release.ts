@@ -9,51 +9,73 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
-const refType = process.argv[2] ?? process.env.GITHUB_REF_TYPE ?? "";
-const refName = process.argv[3] ?? process.env.GITHUB_REF_NAME ?? "";
-const eventName = process.argv[4] ?? process.env.GITHUB_EVENT_NAME ?? "";
-const manualTag = process.argv[5] ?? "";
-const outputFile = process.env.GITHUB_OUTPUT ?? "/dev/null";
-
-function setOutput(shouldRelease: boolean, tagName = "") {
-  appendFileSync(outputFile, `should_release=${shouldRelease}\ntag_name=${tagName}\n`, "utf8");
+/** Extract a release tag from a commit subject, including squash-merge PR suffixes. */
+export function parseReleaseTag(subject: string): string | null {
+  const match = subject
+    .trim()
+    .match(/^chore\(release\):\s*v?([0-9]+\.[0-9]+\.[0-9]+)(?:\s+\(#\d+\))?$/);
+  return match ? `v${match[1]}` : null;
 }
 
-if (refType === "tag") {
-  console.log(`Direct tag push detected: ${refName}`);
-  setOutput(true, refName);
-  process.exit(0);
-}
+if (import.meta.main) {
+  const refType = process.argv[2] ?? process.env["GITHUB_REF_TYPE"] ?? "";
+  const refName = process.argv[3] ?? process.env["GITHUB_REF_NAME"] ?? "";
+  const eventName = process.argv[4] ?? process.env["GITHUB_EVENT_NAME"] ?? "";
+  const manualTag = process.argv[5] ?? "";
+  const outputFile = process.env["GITHUB_OUTPUT"] ?? "/dev/null";
 
-if (eventName === "workflow_dispatch" && manualTag) {
-  console.log(`Manual workflow dispatch release: ${manualTag}`);
-  setOutput(true, manualTag);
-  process.exit(0);
-}
+  const setOutput = (shouldRelease: boolean, tagName = "") => {
+    appendFileSync(outputFile, `should_release=${shouldRelease}\ntag_name=${tagName}\n`, "utf8");
+  };
 
-const logRes = spawnSync("git", ["log", "-1", "--pretty=%B"], { encoding: "utf-8" });
-const commitMsg = logRes.stdout.trim();
-console.log(`Evaluating recent commit: ${commitMsg}`);
-
-const match = commitMsg.match(/chore\(release\):\s*v?([0-9]+\.[0-9]+\.[0-9]+)/);
-if (match) {
-  const tag = `v${match[1]}`;
-  console.log(`Matched release commit for tag: ${tag}`);
-  spawnSync("git", ["fetch", "--tags", "origin"]);
-
-  const tagCheck = spawnSync("git", ["rev-parse", tag]);
-  if (tagCheck.status === 0) {
-    console.log(`Tag ${tag} already exists, skipping release.`);
-    setOutput(false);
-  } else {
-    spawnSync("git", ["config", "user.name", "github-actions[bot]"]);
-    spawnSync("git", ["config", "user.email", "github-actions[bot]@users.noreply.github.com"]);
-    spawnSync("git", ["tag", "-a", tag, "-m", tag]);
-    spawnSync("git", ["push", "origin", tag]);
-    console.log(`Created and pushed tag ${tag}`);
-    setOutput(true, tag);
+  if (refType === "tag") {
+    console.log(`Direct tag push detected: ${refName}`);
+    setOutput(true, refName);
+    process.exit(0);
   }
-} else {
-  console.log("Not a release commit, skipping release workflow.");
-  setOutput(false);
+
+  if (eventName === "workflow_dispatch" && manualTag) {
+    console.log(`Manual workflow dispatch release: ${manualTag}`);
+    setOutput(true, manualTag);
+    process.exit(0);
+  }
+
+  const logRes = spawnSync("git", ["log", "-1", "--pretty=%B"], {
+    encoding: "utf-8",
+  });
+  const commitMsg = logRes.stdout.trim();
+  const subject = commitMsg.split("\n")[0]?.trim() ?? "";
+  console.log(`Evaluating recent commit: ${subject}`);
+
+  const tag = parseReleaseTag(subject);
+  if (tag) {
+    console.log(`Matched release commit for tag: ${tag}`);
+    spawnSync("git", ["fetch", "--tags", "origin"]);
+
+    const tagCheck = spawnSync("git", ["rev-parse", tag]);
+    if (tagCheck.status === 0) {
+      console.log(`Tag ${tag} already exists, skipping release.`);
+      setOutput(false);
+    } else {
+      spawnSync("git", ["config", "user.name", "github-actions[bot]"]);
+      spawnSync("git", ["config", "user.email", "github-actions[bot]@users.noreply.github.com"]);
+      const create = spawnSync("git", ["tag", "-a", tag, "-m", tag]);
+      if (create.status !== 0) {
+        console.error(`Failed to create tag ${tag}`);
+        setOutput(false);
+        process.exit(1);
+      }
+      const push = spawnSync("git", ["push", "origin", tag]);
+      if (push.status !== 0) {
+        console.error(`Failed to push tag ${tag}`);
+        setOutput(false);
+        process.exit(1);
+      }
+      console.log(`Created and pushed tag ${tag}`);
+      setOutput(true, tag);
+    }
+  } else {
+    console.log("Not a release commit, skipping release workflow.");
+    setOutput(false);
+  }
 }
