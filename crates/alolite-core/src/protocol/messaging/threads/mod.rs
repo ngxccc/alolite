@@ -16,5 +16,6 @@ pub(super) use merge::MessageIdentityIndex;
 pub use merge::{deduplicate_threads, merge_sent_message, merge_thread_into};
 pub use message::ChatMessage;
 pub use mutations::{
-    delete_conversation, get_pinned, set_hidden_conversation, update_pinned_conversation,
+    delete_conversation, fetch_pinned_topics, get_pinned, set_hidden_conversation,
+    update_pinned_conversation,
 };

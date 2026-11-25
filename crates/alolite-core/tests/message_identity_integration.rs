@@ -23,6 +23,7 @@ fn thread(messages: Vec<ChatMessage>) -> Thread {
         avatar: None,
         is_group: false,
         messages,
+        pinned_messages: Vec::new(),
         presentation: Default::default(),
         unread: Default::default(),
     }

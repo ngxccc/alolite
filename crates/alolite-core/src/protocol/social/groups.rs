@@ -420,7 +420,15 @@ pub async fn get_groups(s: &Session) -> Result<Vec<Thread>> {
         }
         if !groups.is_empty() {
             let gids: Vec<String> = groups.iter().map(|g| g.id.clone()).collect();
-            if let Ok((info_map, rem_ids)) = fetch_group_profiles(s, &gids).await {
+            let mut info_map: BTreeMap<String, GroupInfoWireData> = BTreeMap::new();
+            let mut rem_ids: HashSet<String> = HashSet::new();
+            for chunk in gids.chunks(50) {
+                if let Ok((chunk_info, chunk_rem)) = fetch_group_profiles(s, chunk).await {
+                    info_map.extend(chunk_info);
+                    rem_ids.extend(chunk_rem);
+                }
+            }
+            if !info_map.is_empty() || !rem_ids.is_empty() {
                 let mut need_mem_uids: Vec<String> = Vec::new();
                 for g in &mut groups {
                     if let Some(info) = info_map.get(&g.id) {
