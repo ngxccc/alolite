@@ -29,9 +29,11 @@ export function StickerMessageMedia({ msg }: { msg: ChatMessage }) {
 
 export function PhotoMessageMedia({
   msg,
+  flush = false,
   onOpenViewer,
 }: {
   msg: ChatMessage;
+  flush?: boolean;
   onOpenViewer: (texKey: string, fullUrl: string) => void;
 }) {
   const rawUrl = msg.link_url ?? (isGifUrl(msg.text) ? msg.text.trim() : "");
@@ -48,7 +50,7 @@ export function PhotoMessageMedia({
   }, [initialSrc]);
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col">
       {src ? (
         <div className="relative">
           {/* HD badge as in Zalo */}
@@ -67,15 +69,22 @@ export function PhotoMessageMedia({
               }
             }}
             onClick={() => onOpenViewer(key, fullUrl)}
-            className="max-h-[320px] max-w-[480px] min-w-[80px] cursor-zoom-in rounded-[6px] object-contain"
+            className={cn(
+              "max-h-[320px] max-w-[480px] min-w-[80px] cursor-zoom-in object-contain",
+              flush ? "w-full" : "rounded-[6px]",
+            )}
           />
         </div>
       ) : (
-        <Button variant="outline" size="sm" onClick={() => onOpenViewer(key, fullUrl)}>
-          Xem hình ảnh
-        </Button>
+        <div className={flush ? "p-3" : ""}>
+          <Button variant="outline" size="sm" onClick={() => onOpenViewer(key, fullUrl)}>
+            Xem hình ảnh
+          </Button>
+        </div>
       )}
-      {!shouldHideMediaCaption(msg) ? <span className="select-text">{msg.text}</span> : null}
+      {!shouldHideMediaCaption(msg) ? (
+        <span className={cn("select-text", flush ? "px-3 pt-1.5" : "pt-1.5")}>{msg.text}</span>
+      ) : null}
     </div>
   );
 }
@@ -220,28 +229,47 @@ export function formatFileSize(desc?: string): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function FileMessageMedia({ msg, downloadDir }: { msg: ChatMessage; downloadDir: string }) {
+export function FileMessageMedia({
+  msg,
+  downloadDir,
+  flush = false,
+}: {
+  msg: ChatMessage;
+  downloadDir: string;
+  flush?: boolean;
+}) {
   return (
-    <div className="flex max-w-[340px] min-w-[220px] items-center gap-3">
-      <div
-        className={cn(
-          "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-          fileIconColor(msg.link_title ?? msg.text),
-        )}
-      >
-        <FileText className="h-5 w-5 text-white" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{msg.link_title ?? msg.text}</div>
-        {msg.link_desc ? (
-          <div className="text-xs text-muted-foreground">{formatFileSize(msg.link_desc)}</div>
-        ) : null}
+    <div
+      className={cn(
+        "flex max-w-[340px] min-w-[240px] items-center justify-between gap-3",
+        flush ? "px-3 pt-2.5 pb-1" : "mt-1 rounded-md border border-border bg-background p-2.5",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-border bg-secondary text-foreground">
+          <FileText className="h-4 w-4" />
+        </div>
+        <div className="flex min-w-0 flex-col">
+          <div className={cn("truncate text-xs font-medium", !flush && "text-foreground")}>
+            {msg.link_title ?? msg.text}
+          </div>
+          {msg.link_desc ? (
+            <div
+              className={cn(
+                "text-[11px] tabular-nums",
+                flush ? "opacity-70" : "text-muted-foreground",
+              )}
+            >
+              {formatFileSize(msg.link_desc)}
+            </div>
+          ) : null}
+        </div>
       </div>
       <Button
         variant="ghost"
         size="icon-sm"
         title="Tải xuống"
-        className="h-8 w-8 shrink-0"
+        className={cn("h-7 w-7 shrink-0", !flush && "text-foreground")}
         onClick={() =>
           void ipc.downloadFile(msg.link_url!, msg.link_title ?? "attachment", downloadDir)
         }

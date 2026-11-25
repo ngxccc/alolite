@@ -24,19 +24,17 @@ import {
   StickerMessageMedia,
   VideoMessageMedia,
 } from "./message-media";
+import { ContextMenu, ContextMenuTrigger } from "@/shared/ui/context-menu";
 import { MessageReactionsChip } from "./message-reactions";
-import { MessageActions } from "./message-actions";
+import { MessageContextMenu } from "./message-actions";
 import type { ResolvedSender } from "./use-sender-lookup";
 
 interface MessageBubbleProps {
   msg: ChatMessage;
-  msgKey: string;
   thread: Thread;
   isGroupedWithPrev: boolean;
   highlighted: boolean;
   senderInfo: ResolvedSender | null;
-  reactPickerFor: string | null;
-  setReactPickerFor: (key: string | null) => void;
   jumpToQuoted: (msg: ChatMessage) => void;
   resolveReplySenderName: (raw?: string | null) => string;
   setRef: (el: HTMLDivElement | null) => void;
@@ -44,13 +42,10 @@ interface MessageBubbleProps {
 
 export function MessageBubble({
   msg,
-  msgKey,
   thread,
   isGroupedWithPrev,
   highlighted,
   senderInfo,
-  reactPickerFor,
-  setReactPickerFor,
   jumpToQuoted,
   resolveReplySenderName,
   setRef,
@@ -70,16 +65,24 @@ export function MessageBubble({
   const callCard = parseCallCard(msg);
   const isBareSticker = Boolean(msg.sticker_id);
   const isTextOrRich = !isBareSticker;
+  const isPhotoBubble =
+    !isRecalled &&
+    !msg.sticker_id &&
+    !callCard &&
+    isPhotoMessage(msg) &&
+    Boolean(msg.link_thumb ?? msg.link_url ?? isGifUrl(msg.text));
+  const isFileBubble =
+    !isRecalled && !msg.sticker_id && !callCard && isFileMessage(msg) && Boolean(msg.link_url);
+  const isFlushMedia = (isPhotoBubble || isFileBubble) && !msg.reply_to_text;
   const bubbleVariant = msg.is_outgoing ? "sent" : "received";
 
   const handleReaction = (reaction: string) => {
     reactToMessage(thread.id, msg.id, msg.ts, reaction, false);
     setStatusMessage("Đã thả cảm xúc");
     void ipc.reactMessage(thread.id, thread.is_group, msg, reaction);
-    setReactPickerFor(null);
   };
 
-  return (
+  const bubbleContent = (
     <ChatBubble
       ref={setRef}
       variant={bubbleVariant}
@@ -117,6 +120,7 @@ export function MessageBubble({
           variant={bubbleVariant}
           className={cn(
             isBareSticker && "border-none bg-transparent p-0 shadow-none",
+            isFlushMedia && "overflow-hidden p-0",
             isRecalled && "italic opacity-70",
           )}
         >
@@ -127,7 +131,12 @@ export function MessageBubble({
           senderInfo &&
           isTextOrRich &&
           !isRecalled ? (
-            <div className="mb-1 text-sm font-semibold text-accent-foreground select-none">
+            <div
+              className={cn(
+                "text-xs font-semibold text-foreground select-none",
+                isFlushMedia ? "px-3 pt-2 pb-1" : "mb-1",
+              )}
+            >
               {senderInfo.name}
             </div>
           ) : null}
@@ -165,10 +174,10 @@ export function MessageBubble({
               inlineVideoReason={inlineVideoReason}
               onNotify={(message) => showToast(message)}
             />
-          ) : isPhotoMessage(msg) &&
-            Boolean(msg.link_thumb ?? msg.link_url ?? isGifUrl(msg.text)) ? (
+          ) : isPhotoBubble ? (
             <PhotoMessageMedia
               msg={msg}
+              flush={isFlushMedia}
               onOpenViewer={(texKey, fullUrl) =>
                 setImageViewerState({
                   texKey,
@@ -179,8 +188,8 @@ export function MessageBubble({
                 })
               }
             />
-          ) : isFileMessage(msg) && msg.link_url ? (
-            <FileMessageMedia msg={msg} downloadDir={downloadDir} />
+          ) : isFileBubble ? (
+            <FileMessageMedia msg={msg} downloadDir={downloadDir} flush={isFlushMedia} />
           ) : (
             <div>
               <div className="select-text">{msg.text}</div>
@@ -193,6 +202,7 @@ export function MessageBubble({
             <ChatBubbleTimestamp
               timestamp={msg.time}
               className={cn(
+                isFlushMedia && "px-3 pb-2",
                 msg.is_outgoing
                   ? "justify-end text-bubble-out-foreground/60"
                   : "text-muted-foreground",
@@ -223,19 +233,15 @@ export function MessageBubble({
         {/* Reaction badge/chip */}
         <MessageReactionsChip reactions={msg.reactions} isOutgoing={msg.is_outgoing} />
       </div>
-
-      {/* Floating action bar */}
-      {!isRecalled ? (
-        <MessageActions
-          msg={msg}
-          msgKey={msgKey}
-          thread={thread}
-          reactPickerFor={reactPickerFor}
-          setReactPickerFor={setReactPickerFor}
-          onSelectReaction={handleReaction}
-          variant={bubbleVariant}
-        />
-      ) : null}
     </ChatBubble>
+  );
+
+  if (isRecalled) return bubbleContent;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={bubbleContent} />
+      <MessageContextMenu msg={msg} thread={thread} onSelectReaction={handleReaction} />
+    </ContextMenu>
   );
 }

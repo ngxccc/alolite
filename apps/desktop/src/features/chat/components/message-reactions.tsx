@@ -212,25 +212,30 @@ interface MessageReactionsChipProps {
 export function MessageReactionsChip({ reactions, isOutgoing }: MessageReactionsChipProps) {
   if (!reactions || reactions.length === 0) return null;
 
+  const counts = new Map<string, number>();
+  for (const raw of reactions) {
+    const icon = resolveReactionEmoji(raw);
+    counts.set(icon, (counts.get(icon) ?? 0) + 1);
+  }
+
   return (
     <div
       className={cn(
-        "z-999 -mt-2.5 flex cursor-pointer items-center gap-0.5 rounded-full border border-border/80 bg-sidebar px-2 py-0.5 text-xs shadow-sm transition-colors select-none hover:bg-secondary",
-        isOutgoing ? "mr-1 self-end" : "ml-1 self-start",
+        "mt-1.5 flex flex-wrap items-center gap-1 select-none",
+        isOutgoing ? "justify-end self-end" : "justify-start self-start",
       )}
     >
-      {Array.from(new Set(reactions))
-        .slice(0, 5)
-        .map((em, i) => (
-          <span key={`${em}_${i}`} className="flex items-center">
-            <ReactionBadge raw={em} />
+      {Array.from(counts.entries())
+        .slice(0, 6)
+        .map(([icon, count]) => (
+          <span
+            key={icon}
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-foreground tabular-nums"
+          >
+            <span className="text-xs leading-none">{icon}</span>
+            <span>{count}</span>
           </span>
         ))}
-      {reactions.length > 1 ? (
-        <span className="ml-0.5 text-xs font-semibold text-muted-foreground">
-          {reactions.length}
-        </span>
-      ) : null}
     </div>
   );
 }
