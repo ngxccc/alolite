@@ -2,6 +2,7 @@
 name = "alolite-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
