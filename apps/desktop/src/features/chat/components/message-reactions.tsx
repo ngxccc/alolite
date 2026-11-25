@@ -215,7 +215,7 @@ export function MessageReactionsChip({ reactions, isOutgoing }: MessageReactions
   return (
     <div
       className={cn(
-        "-mt-1.5 flex cursor-pointer items-center gap-0.5 rounded-full border border-border/80 bg-sidebar px-2 py-0.5 text-xs shadow-sm transition-colors select-none hover:bg-secondary",
+        "z-999 -mt-2.5 flex cursor-pointer items-center gap-0.5 rounded-full border border-border/80 bg-sidebar px-2 py-0.5 text-xs shadow-sm transition-colors select-none hover:bg-secondary",
         isOutgoing ? "mr-1 self-end" : "ml-1 self-start",
       )}
     >

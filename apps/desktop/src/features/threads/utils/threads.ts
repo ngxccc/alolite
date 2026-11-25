@@ -114,6 +114,8 @@ export function mergeThreadInto(existing: Thread, incoming: Thread): Thread {
     preview: incoming.preview || existing.preview,
     time: incoming.time || existing.time,
     messages: merged,
+    pinned_messages:
+      incoming.pinned_messages.length > 0 ? incoming.pinned_messages : existing.pinned_messages,
     unread: incoming.unread,
     presentation: {
       ...existing.presentation,

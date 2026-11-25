@@ -37,12 +37,12 @@
   --radius: 0.5rem;
 
   /* Layer 1: 4-Column Shell (Zinc Light) */
-  --rail: #18181b;
-  --rail-foreground: #fafafa;
-  --rail-muted: rgba(255, 255, 255, 0.1);
+  --rail: #fafafa;
+  --rail-foreground: #09090b;
+  --rail-muted: rgba(9, 9, 11, 0.06);
   --sidebar: #ffffff;
   --sidebar-foreground: #09090b;
-  --canvas: #fafafa;
+  --canvas: #ffffff;
 
   /* Layer 2: shadcn/ui Core (Zinc Light) */
   --background: #ffffff;
@@ -66,7 +66,7 @@
   --ring: #18181b;
 
   /* Layer 3: Chat Semantic Tokens (Zinc Light) */
-  --bubble-in: #ffffff;
+  --bubble-in: #f4f4f5;
   --bubble-in-foreground: #09090b;
   --bubble-in-border: #e4e4e7;
   --bubble-out: #18181b;

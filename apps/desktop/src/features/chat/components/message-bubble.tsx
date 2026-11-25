@@ -136,13 +136,16 @@ export function MessageBubble({
           {msg.reply_to_text ? (
             <div
               onClick={() => jumpToQuoted(msg)}
-              className="mb-2 cursor-pointer rounded-md bg-background/40 px-2.5 py-1.5 text-sm hover:bg-background/70"
+              className="mb-2 flex cursor-pointer items-stretch gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs hover:bg-accent/50"
             >
-              <div className="text-xs font-bold text-primary">
-                {resolveReplySenderName(msg.reply_to_sender)}
-              </div>
-              <div className="max-w-[300px] truncate text-muted-foreground">
-                {msg.reply_to_text}
+              <div className="w-0.5 shrink-0 rounded-full bg-primary" />
+              <div className="flex min-w-0 flex-col">
+                <span className="text-[11px] font-semibold text-foreground">
+                  {resolveReplySenderName(msg.reply_to_sender)}
+                </span>
+                <span className="max-w-[300px] truncate text-muted-foreground">
+                  {msg.reply_to_text}
+                </span>
               </div>
             </div>
           ) : null}

@@ -281,11 +281,12 @@ export function Composer({ thread }: ComposerProps) {
 
       {/* Replying-to bar */}
       {replyingTo ? (
-        <div className="mb-1 flex items-center justify-between rounded-md border-l-[3px] border-primary bg-muted/60 px-2.5 py-1.5 text-xs">
+        <div className="mb-1 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
           <div className="flex min-w-0 items-center gap-2">
-            <CornerUpLeft className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <CornerUpLeft className="h-3.5 w-3.5 shrink-0 text-foreground" />
+            <div className="h-7 w-0.5 shrink-0 rounded-full bg-primary" />
             <div className="min-w-0">
-              <div className="font-bold text-foreground">Trả lời {replyingTo.sender}</div>
+              <div className="font-semibold text-foreground">Đang trả lời {replyingTo.sender}</div>
               <div className="truncate text-muted-foreground">{replyingTo.text}</div>
             </div>
           </div>

@@ -71,13 +71,13 @@ export const ChatBubbleAvatar: React.FC<ChatBubbleAvatarProps> = ({
 
 // ── ChatBubbleMessage ────────────────────────────────────────
 const chatBubbleMessageVariants = cva(
-  "relative max-w-[640px] text-base leading-relaxed break-words whitespace-pre-wrap shadow-xs transition-colors",
+  "relative max-w-[640px] text-sm leading-relaxed break-words whitespace-pre-wrap transition-colors",
   {
     variants: {
       variant: {
         received:
-          "rounded-2xl rounded-bl-xs border border-border/40 bg-bubble-in px-3.5 py-2.5 text-bubble-in-foreground",
-        sent: "rounded-2xl rounded-br-xs border border-bubble-out-border/30 bg-bubble-out px-3.5 py-2.5 text-bubble-out-foreground",
+          "rounded-lg border border-bubble-in-border bg-bubble-in px-3.5 py-2.5 text-bubble-in-foreground",
+        sent: "rounded-lg border border-bubble-out-border bg-bubble-out px-3.5 py-2.5 text-bubble-out-foreground shadow-xs",
       },
       layout: {
         default: "",
