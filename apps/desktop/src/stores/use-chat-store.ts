@@ -1,14 +1,25 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import {
+  mergeThreadInto,
+  reconcileSentMessage,
+  sortThreads,
+} from "@/features/threads/utils/threads";
 import type {
   AppSettings,
   ChatMessage,
+  CoreEventDto,
   DeliveryState,
   LinkMetadata,
   PinnedPackMeta,
   StickerItem,
   Thread,
 } from "@/shared/types/ipc.generated";
+
+type MuteEventItem = Extract<
+  CoreEventDto,
+  { type: "MuteEventsReceived" }
+>["payload"]["events"][number];
 
 export interface ChatStoreState {
   threads: Thread[];
@@ -35,6 +46,7 @@ export interface ChatStoreState {
   isSyncing: boolean;
   syncProgress: { current: number; total: number } | null;
   lastSyncStats: string | null;
+  phoneSyncRunning: boolean;
   phoneSyncProgress: { current: number; total: number; stage?: string } | null;
 
   // App settings cache
@@ -58,7 +70,25 @@ export interface ChatStoreState {
   setSending: (cliMsgId: string, sending: boolean) => void;
   markThreadRead: (threadId: string) => void;
   setRenderLimit: (threadId: string, limit: number) => void;
+  expandRenderLimit: (threadId: string, step?: number) => void;
   setHistoryReachedStart: (threadId: string, reached: boolean) => void;
+  toggleLocalStar: (threadId: string, msgId: string) => void;
+
+  mergeThreadsUpdate: (updates: Thread[]) => void;
+  reconcileSentMessageInThread: (threadId: string, msg: ChatMessage) => void;
+  reactToMessage: (
+    threadId: string,
+    msgId: string | null | undefined,
+    ts: number,
+    reaction: string,
+    revert?: boolean,
+  ) => void;
+  deleteMessageLocal: (threadId: string, msgId: string | null | undefined, ts: number) => void;
+  recallMessageLocal: (threadId: string, msgId: string | null | undefined, ts: number) => void;
+  clearAllMessagesLocal: () => void;
+  syncMuteSnapshot: (mutedThreads: Record<string, number>) => void;
+  applyMuteEvents: (events: MuteEventItem[]) => void;
+  resetChatSession: () => void;
 
   setPinnedPacks: (packs: PinnedPackMeta[]) => void;
   setComposerStickerSuggestions: (items: StickerItem[], query: string | null) => void;
@@ -67,6 +97,7 @@ export interface ChatStoreState {
   setIsSyncing: (isSyncing: boolean) => void;
   setSyncProgress: (progress: { current: number; total: number } | null) => void;
   setLastSyncStats: (stats: string | null) => void;
+  setPhoneSyncRunning: (running: boolean) => void;
   setPhoneSyncProgress: (
     progress: { current: number; total: number; stage?: string } | null,
   ) => void;
@@ -100,6 +131,7 @@ export const useChatStore = create<ChatStoreState>()(
     isSyncing: false,
     syncProgress: null,
     lastSyncStats: null,
+    phoneSyncRunning: false,
     phoneSyncProgress: null,
 
     settings: null,
@@ -231,9 +263,154 @@ export const useChatStore = create<ChatStoreState>()(
         state.renderLimitByThread[threadId] = limit;
       }),
 
+    expandRenderLimit: (threadId, step = 150) =>
+      set((state) => {
+        const cur = state.renderLimitByThread[threadId] ?? 150;
+        state.renderLimitByThread[threadId] = cur + step;
+      }),
+
     setHistoryReachedStart: (threadId, reached) =>
       set((state) => {
         state.historyReachedStart[threadId] = reached;
+      }),
+
+    toggleLocalStar: (threadId, msgId) =>
+      set((state) => {
+        const thread = state.threads.find((t) => t.id === threadId);
+        if (!thread) return;
+        const msg = thread.messages.find((m) => m.id === msgId);
+        if (msg) msg.is_starred = !msg.is_starred;
+      }),
+
+    mergeThreadsUpdate: (updates) =>
+      set((state) => {
+        if (updates.length === 0) return;
+        const byId = new Map(state.threads.map((t) => [t.id, t]));
+        for (const incoming of updates) {
+          if (!incoming.id || incoming.id === "0") continue;
+          const existing = byId.get(incoming.id);
+          if (existing) {
+            const oldLen = existing.messages.length;
+            const merged = mergeThreadInto(existing, incoming);
+            byId.set(incoming.id, merged);
+            const added = merged.messages.length - oldLen;
+            if (added > 0) {
+              const newIncoming = merged.messages
+                .slice(-added)
+                .filter((m) => !m.is_outgoing).length;
+              if (newIncoming > 0 && incoming.id !== state.selectedThreadId) {
+                state.unreadCounts[incoming.id] =
+                  (state.unreadCounts[incoming.id] ?? 0) + newIncoming;
+              }
+            }
+          } else {
+            byId.set(incoming.id, incoming);
+          }
+        }
+        const rawList = Array.from(byId.values());
+        const sorted = state.settings ? sortThreads(rawList, state.settings) : rawList;
+        state.threads = sorted;
+        state.selectedThreadId =
+          state.selectedThreadId && sorted.some((t) => t.id === state.selectedThreadId)
+            ? state.selectedThreadId
+            : (sorted[0]?.id ?? null);
+      }),
+
+    reconcileSentMessageInThread: (threadId, msg) =>
+      set((state) => {
+        const idx = state.threads.findIndex((t) => t.id === threadId);
+        if (idx === -1) return;
+        const existing = state.threads[idx];
+        if (existing) {
+          state.threads[idx] = reconcileSentMessage(existing, msg);
+        }
+      }),
+
+    reactToMessage: (threadId, msgId, ts, reaction, revert = false) =>
+      set((state) => {
+        const thread = state.threads.find((t) => t.id === threadId);
+        if (!thread) return;
+        for (const m of thread.messages) {
+          const matches = (msgId && m.id === msgId) || (!msgId && m.ts === ts);
+          if (!matches) continue;
+          const current = m.reactions ?? [];
+          if (revert) {
+            m.reactions = current.filter((r) => r !== reaction);
+          } else if (!current.includes(reaction)) {
+            m.reactions = [...current, reaction];
+          }
+        }
+      }),
+
+    deleteMessageLocal: (threadId, msgId, ts) =>
+      set((state) => {
+        const thread = state.threads.find((t) => t.id === threadId);
+        if (!thread) return;
+        thread.messages = thread.messages.filter(
+          (m) => !((msgId && m.id === msgId) || (!msgId && m.ts === ts)),
+        );
+      }),
+
+    recallMessageLocal: (threadId, msgId, ts) =>
+      set((state) => {
+        const thread = state.threads.find((t) => t.id === threadId);
+        if (!thread) return;
+        for (const m of thread.messages) {
+          const matches = (msgId && m.id === msgId) || (!msgId && m.ts === ts);
+          if (!matches) continue;
+          m.text = "[Tin nhắn đã thu hồi]";
+          m.sticker_id = undefined;
+          m.link_url = undefined;
+          m.link_thumb = undefined;
+        }
+      }),
+
+    clearAllMessagesLocal: () =>
+      set((state) => {
+        for (const t of state.threads) {
+          t.messages = [];
+        }
+      }),
+
+    syncMuteSnapshot: (mutedThreads) =>
+      set((state) => {
+        if (!state.settings) return;
+        state.settings.muted_threads = {
+          ...state.settings.muted_threads,
+          ...mutedThreads,
+        };
+      }),
+
+    applyMuteEvents: (events) =>
+      set((state) => {
+        if (!state.settings) return;
+        for (const ev of events) {
+          if (ev.muted) {
+            if (ev.settings_until != null) {
+              state.settings.muted_threads[ev.thread_id] = ev.settings_until;
+            }
+          } else {
+            delete state.settings.muted_threads[ev.thread_id];
+          }
+          const thread = state.threads.find((t) => t.id === ev.thread_id);
+          if (thread) {
+            thread.presentation.muted = ev.muted;
+            thread.unread.muted = ev.muted;
+            thread.unread.muted_until = ev.muted_until;
+          }
+        }
+      }),
+
+    resetChatSession: () =>
+      set((state) => {
+        state.threads = [];
+        state.selectedThreadId = null;
+        state.unreadCounts = {};
+        state.historyReachedStart = {};
+        state.renderLimitByThread = {};
+        state.replyingTo = null;
+        state.forwardMsg = null;
+        state.quoteHighlightId = null;
       }),
 
     setPinnedPacks: (packs) =>
@@ -267,6 +444,11 @@ export const useChatStore = create<ChatStoreState>()(
         state.lastSyncStats = stats;
       }),
 
+    setPhoneSyncRunning: (running) =>
+      set((state) => {
+        state.phoneSyncRunning = running;
+      }),
+
     setPhoneSyncProgress: (progress) =>
       set((state) => {
         state.phoneSyncProgress = progress;
@@ -275,6 +457,9 @@ export const useChatStore = create<ChatStoreState>()(
     setSettings: (settings) =>
       set((state) => {
         state.settings = settings;
+        if (settings) {
+          state.threads = sortThreads(state.threads, settings);
+        }
       }),
 
     updateSettings: (partial) =>

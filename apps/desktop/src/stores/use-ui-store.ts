@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { DevDiagnosticsSnapshot } from "@/shared/types/ipc.generated";
-import type { ImageViewerState, NavSection, SettingsTab } from "@/app/store/app-state";
+import type { DevDiagnosticsSnapshot, UpdateCheckResult } from "@/shared/types/ipc.generated";
+import type { ImageViewerState, NavSection, SettingsTab } from "./types";
+
+let toastSeq = 1;
 
 export interface UIState {
   themeMode: "light" | "dark" | "system";
@@ -26,8 +28,17 @@ export interface UIState {
   inChatSearchOpen: boolean;
   inChatSearchQuery: string;
 
-  // Toast
-  toast: { message: string; kind?: "info" | "error" | "success" } | null;
+  // App Updates
+  updateChecking: boolean;
+  updateInfo: UpdateCheckResult | null;
+  updateError: string | null;
+  updateDownloading: boolean;
+  updateDownloadMessage: string;
+  updateProgress: { downloaded: number; total: number } | null;
+
+  // Status & Toast
+  statusMessage: string;
+  toast: { id?: number; message: string; kind?: "info" | "error" | "success" } | null;
 
   // Actions
   setThemeMode: (mode: "light" | "dark" | "system") => void;
@@ -52,7 +63,22 @@ export interface UIState {
   setInChatSearchOpen: (open: boolean) => void;
   setInChatSearchQuery: (query: string) => void;
 
-  setToast: (toast: { message: string; kind?: "info" | "error" | "success" } | null) => void;
+  setUpdateChecking: (checking: boolean) => void;
+  setUpdateCheckFinished: (
+    ok: boolean,
+    info: UpdateCheckResult | null,
+    error: string | null,
+    silent: boolean,
+  ) => void;
+  setUpdateDownloadStatus: (downloading: boolean, message: string) => void;
+  setUpdateDownloadProgress: (progress: { downloaded: number; total: number } | null) => void;
+  setUpdateApplied: (version: string) => void;
+
+  setStatusMessage: (message: string) => void;
+  showToast: (message: string, kind?: "info" | "error" | "success") => void;
+  setToast: (
+    toast: { id?: number; message: string; kind?: "info" | "error" | "success" } | null,
+  ) => void;
   clearToast: () => void;
 }
 
@@ -78,6 +104,14 @@ export const useUIStore = create<UIState>()(
     inChatSearchOpen: false,
     inChatSearchQuery: "",
 
+    updateChecking: false,
+    updateInfo: null,
+    updateError: null,
+    updateDownloading: false,
+    updateDownloadMessage: "",
+    updateProgress: null,
+
+    statusMessage: "Trực tuyến · Sẵn sàng",
     toast: null,
 
     setThemeMode: (mode) =>
@@ -156,9 +190,65 @@ export const useUIStore = create<UIState>()(
         state.inChatSearchQuery = query;
       }),
 
+    setUpdateChecking: (checking) =>
+      set((state) => {
+        state.updateChecking = checking;
+        state.updateError = null;
+      }),
+
+    setUpdateCheckFinished: (ok, info, error, silent) =>
+      set((state) => {
+        state.updateChecking = false;
+        if (ok) {
+          state.updateInfo = info;
+          state.updateError = null;
+          if (!silent && info && !info.has_update) {
+            toastSeq += 1;
+            state.toast = { id: toastSeq, message: "Bạn đang dùng phiên bản mới nhất" };
+          }
+        } else {
+          state.updateError = error ?? "Không kiểm tra được cập nhật";
+        }
+      }),
+
+    setUpdateDownloadStatus: (downloading, message) =>
+      set((state) => {
+        state.updateDownloading = downloading;
+        state.updateDownloadMessage = message;
+      }),
+
+    setUpdateDownloadProgress: (progress) =>
+      set((state) => {
+        state.updateProgress = progress;
+      }),
+
+    setUpdateApplied: (version) =>
+      set((state) => {
+        state.updateDownloading = false;
+        state.updateDownloadMessage = `Đã cập nhật lên v${version} — đang khởi động lại…`;
+        toastSeq += 1;
+        state.toast = { id: toastSeq, message: `Đã cập nhật v${version}`, kind: "success" };
+      }),
+
+    setStatusMessage: (message) =>
+      set((state) => {
+        state.statusMessage = message;
+      }),
+
+    showToast: (message, kind) =>
+      set((state) => {
+        toastSeq += 1;
+        state.toast = { id: toastSeq, message, kind };
+      }),
+
     setToast: (toast) =>
       set((state) => {
-        state.toast = toast;
+        if (!toast) {
+          state.toast = null;
+          return;
+        }
+        toastSeq += 1;
+        state.toast = { id: toast.id ?? toastSeq, message: toast.message, kind: toast.kind };
       }),
 
     clearToast: () =>

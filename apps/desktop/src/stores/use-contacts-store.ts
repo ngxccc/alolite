@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { FriendshipStatus, PhoneLookupResult } from "@/shared/types/ipc.generated";
-import type { ContactsSubTab } from "@/app/store/app-state";
+import type { ContactsSubTab } from "./types";
 
 export interface ContactsStoreState {
   contactsSubTab: ContactsSubTab;
@@ -11,6 +11,7 @@ export interface ContactsStoreState {
   phoneLookupResult: PhoneLookupResult | null;
   phoneLookupError: string | null;
   friendStatusByUid: Record<string, FriendshipStatus | undefined>;
+  userOnlineMap: Record<string, [boolean, string] | undefined>;
 
   // Actions
   setContactsSubTab: (tab: ContactsSubTab) => void;
@@ -20,7 +21,9 @@ export interface ContactsStoreState {
   setPhoneLookupResult: (result: PhoneLookupResult | null) => void;
   setPhoneLookupError: (error: string | null) => void;
   setFriendStatus: (uid: string, status: FriendshipStatus) => void;
+  setUserOnline: (uid: string, online: [boolean, string]) => void;
   resetPhoneLookup: () => void;
+  resetContacts: () => void;
 }
 
 export const useContactsStore = create<ContactsStoreState>()(
@@ -32,6 +35,7 @@ export const useContactsStore = create<ContactsStoreState>()(
     phoneLookupResult: null,
     phoneLookupError: null,
     friendStatusByUid: {},
+    userOnlineMap: {},
 
     setContactsSubTab: (tab) =>
       set((state) => {
@@ -71,12 +75,28 @@ export const useContactsStore = create<ContactsStoreState>()(
         state.friendStatusByUid[uid] = status;
       }),
 
+    setUserOnline: (uid, online) =>
+      set((state) => {
+        state.userOnlineMap[uid] = online;
+      }),
+
     resetPhoneLookup: () =>
       set((state) => {
         state.phoneLookupQuery = "";
         state.phoneLookupLoading = false;
         state.phoneLookupResult = null;
         state.phoneLookupError = null;
+      }),
+
+    resetContacts: () =>
+      set((state) => {
+        state.contactsSearchQuery = "";
+        state.phoneLookupQuery = "";
+        state.phoneLookupLoading = false;
+        state.phoneLookupResult = null;
+        state.phoneLookupError = null;
+        state.friendStatusByUid = {};
+        state.userOnlineMap = {};
       }),
   })),
 );
