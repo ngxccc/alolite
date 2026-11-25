@@ -7,7 +7,7 @@
 **A fast, lightweight, native desktop messaging client written in Rust**  
 _No Node.js at runtime • No Electron • No Chromium bloat_
 
-[![Rust](https://img.shields.io/badge/Rust-1.75+-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.100+-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2.0-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?logo=react&logoColor=black)](https://react.dev)
@@ -130,7 +130,7 @@ make dev-desktop        # builds the UI, then runs alolite-desktop
 
 ### Toolchain requirements
 
-- Rust 1.75+ (edition 2021)
+- Rust 1.100+ (edition 2021)
 - [Bun](https://bun.sh) (only required to compile the static frontend assets; the final binary contains zero Node.js runtimes)
 - **Fast Linker**: `mold` and `clang` (configured in `.cargo/config.toml` for sub-second native linking)
 - Tauri v2 build dependencies:
