@@ -9,9 +9,11 @@ rm -f /usr/local/bin/alolite \
       /usr/local/bin/alolite-desktop \
       /usr/local/share/applications/alolite.desktop \
       /usr/local/share/icons/hicolor/256x256/apps/alolite.png \
+      /usr/local/share/metainfo/io.github.ngxccc.alolite.metainfo.xml \
       "$HOME/.local/bin/alolite" \
       "$HOME/.local/bin/alolite-desktop" \
       "$HOME/.local/share/applications/alolite.desktop" \
-      "$HOME/.local/share/icons/hicolor/256x256/apps/alolite.png"
+      "$HOME/.local/share/icons/hicolor/256x256/apps/alolite.png" \
+      "$HOME/.local/share/metainfo/io.github.ngxccc.alolite.metainfo.xml"
 
 echo "Đã gỡ cài đặt AloLite."

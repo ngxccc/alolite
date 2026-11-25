@@ -15,12 +15,13 @@ if [ ! -f target/release/alolite ] || [ ! -f target/release/alolite-desktop ]; t
   strip target/release/alolite target/release/alolite-desktop || true
 fi
 
-mkdir -p dist AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+mkdir -p dist AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps AppDir/usr/share/metainfo
 
 cp target/release/alolite AppDir/usr/bin/alolite
 cp target/release/alolite-desktop AppDir/usr/bin/alolite-desktop
 cp packaging/linux/alolite.desktop AppDir/alolite.desktop
 cp packaging/linux/alolite.desktop AppDir/usr/share/applications/alolite.desktop
+cp packaging/linux/io.github.ngxccc.alolite.metainfo.xml AppDir/usr/share/metainfo/io.github.ngxccc.alolite.metainfo.xml
 cp assets/app_icon.png AppDir/alolite.png
 cp assets/app_icon.png AppDir/.DirIcon
 cp assets/app_icon.png AppDir/usr/share/icons/hicolor/256x256/apps/alolite.png

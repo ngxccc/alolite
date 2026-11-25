@@ -35,16 +35,19 @@ Lightweight native desktop messaging client written in Rust + Tauri.
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/share/applications
 mkdir -p %{buildroot}/usr/share/icons/hicolor/256x256/apps
+mkdir -p %{buildroot}/usr/share/metainfo
 install -m 755 %{_topdir}/../target/release/alolite %{buildroot}/usr/bin/alolite
 install -m 755 %{_topdir}/../target/release/alolite-desktop %{buildroot}/usr/bin/alolite-desktop
 install -m 644 %{_topdir}/../packaging/linux/alolite.desktop %{buildroot}/usr/share/applications/alolite.desktop
 install -m 644 %{_topdir}/../assets/app_icon.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/alolite.png
+install -m 644 %{_topdir}/../packaging/linux/io.github.ngxccc.alolite.metainfo.xml %{buildroot}/usr/share/metainfo/io.github.ngxccc.alolite.metainfo.xml
 
 %files
 /usr/bin/alolite
 /usr/bin/alolite-desktop
 /usr/share/applications/alolite.desktop
 /usr/share/icons/hicolor/256x256/apps/alolite.png
+/usr/share/metainfo/io.github.ngxccc.alolite.metainfo.xml
 EOF
 
 rpmbuild --define "_topdir $(pwd)/rpmbuild" -bb rpmbuild/SPECS/alolite.spec
