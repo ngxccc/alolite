@@ -6,16 +6,16 @@ This project is a client, not a server. The "API" surface is three boundaries:
 | :----------------- | :------------ | :----------------------------------------------------------------------------------------------------- |
 | **Zalo HTTP API**  | outbound      | `protocol/session/`, `protocol/registry/`, `protocol/auth/`, `protocol/social/`, `protocol/messaging/` |
 | **Zalo WebSocket** | bidirectional | `protocol/socket.rs`, `protocol/registry/ws.rs`                                                        |
-| **UI ↔ Core IPC**  | in-process    | `core/` (`CoreEngine` / `CoreEvent`) + `gui/worker/` (`WorkerCmd` / `GuiEvent`)                        |
+| **UI ↔ Core IPC**  | in-process    | `crates/alolite-core/src/core/` (`CoreEngine` / `CoreEvent`) + `crates/alolite-desktop/` (Tauri IPC)   |
 
-Plus local filesystem persistence (`src/storage/`, `protocol/session/persistence.rs`).
+Plus local filesystem persistence (`crates/alolite-core/src/storage/`, `crates/alolite-core/src/protocol/session/persistence.rs`).
 
 ---
 
 ## 1. Outbound HTTP Conventions
 
-- **Hosts come from `src/protocol/endpoints.rs` only.** No literal `*.zalo.me` / `*.zaloapp.com` URLs elsewhere.
-- **Command IDs & paths belong in `src/protocol/registry/`.** Invoke via `Session::api_get` / `Session::api_post`; reuse `src/protocol/wire.rs` for JSON unwrapping, `group_` stripping, and control flattening.
+- **Hosts come from `crates/alolite-core/src/protocol/endpoints.rs` only.** No literal `*.zalo.me` / `*.zaloapp.com` URLs elsewhere.
+- **Command IDs & paths belong in `crates/alolite-core/src/protocol/registry/`.** Invoke via `Session::api_get` / `Session::api_post`; reuse `crates/alolite-core/src/protocol/wire.rs` for JSON unwrapping, `group_` stripping, and control flattening.
 - **Every request goes through one path**: build params → `ParamCipher v2` (`param_cipher.rs`) → `signkey` (`crypto.rs`) → attach session cookies → send.
 - **No ad-hoc `reqwest::Client` per call.** Reuse the shared client so cookies and TLS config stay consistent.
 - **Timeouts are explicit** on every request; no unbounded awaits.
@@ -85,7 +85,7 @@ Rules:
 
 ## 5. WebSocket Conventions
 
-- Command IDs are constants in `src/protocol/registry/ws.rs`; never inline magic numbers.
+- Command IDs are constants in `crates/alolite-core/src/protocol/registry/ws.rs`; never inline magic numbers.
 - A push frame is acknowledged/parsed without blocking the read loop; heavy decoding moves to `spawn_blocking`.
 - Reconnect uses jittered backoff and re-authenticates before resubscribing.
 - Unknown frame types are logged and skipped, never fatal.
@@ -104,7 +104,7 @@ Rules:
 
 ## 7. Local Persistence Boundary
 
-- `src/storage/` (`MessageStore`, `sync_ingest`) returns `anyhow::Result`; callers decide whether the failure is fatal.
+- `crates/alolite-core/src/storage/` (`MessageStore`, `sync_ingest`) returns `anyhow::Result`; callers decide whether the failure is fatal.
 - A failed history write must never block message delivery or UI rendering.
 - Schema and migration rules: `docs/standards/database-and-migrations.md`.
 

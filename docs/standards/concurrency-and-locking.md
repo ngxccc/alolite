@@ -1,18 +1,18 @@
 # Concurrency & Locking Standards
 
-Runtime model: one UI thread (`egui`), one Tokio runtime owned by `CoreEngine` (`src/core/`), blocking work on `spawn_blocking`, SQLite accessed via `CoreEngine`/`spawn_blocking`.
+Runtime model: one UI thread (`apps/desktop` Tauri WebView), one Tokio runtime owned by `CoreEngine` (`crates/alolite-core/src/core/`), blocking work on `spawn_blocking`, SQLite accessed via `CoreEngine`/`spawn_blocking`.
 
 ---
 
 ## 1. Thread Ownership Matrix
 
-| Resource                                | Owner                              | Access rule                              |
-| :-------------------------------------- | :--------------------------------- | :--------------------------------------- |
-| UI state (`egui` context, widget state) | UI thread                          | Never mutated off-thread.                |
-| Tokio runtime, HTTP client, WebSocket   | Worker                             | UI only sends `WorkerCmd`.               |
-| SQLite `MessageStore`                   | Worker                             | One connection, no cross-thread sharing. |
-| `session.json` / `Session`              | Worker                             | UI receives snapshots, not handles.      |
-| Media/sticker caches                    | Worker (write), UI (read snapshot) | No shared `&mut`.                        |
+| Resource                                      | Owner                           | Access rule                              |
+| :-------------------------------------------- | :------------------------------ | :--------------------------------------- |
+| UI state (`apps/desktop` React/Zustand state) | UI thread                       | Never blocks on I/O; invokes Tauri IPC.  |
+| Tokio runtime, HTTP client, WebSocket         | `CoreEngine`                    | UI only invokes Tauri commands.          |
+| SQLite `MessageStore`                         | `CoreEngine`                    | One connection, no cross-thread sharing. |
+| `session.json` / `Session`                    | `CoreEngine`                    | UI receives snapshots, not handles.      |
+| Media/sticker caches                          | `CoreEngine` (write), UI (read) | No shared `&mut`.                        |
 
 **INV-3**: the UI thread never blocks on network, disk, crypto or SQLite.
 

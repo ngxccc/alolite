@@ -103,7 +103,9 @@ Tier 3 additionally requires: ADR link in `## Summary`, protocol capture/evidenc
 1. **Inspection & proposal only**: before committing, run `git status` and `git diff`; propose the atomic commit slicing plan and show the formatted Conventional Commit messages.
 2. **No secrets in the diff**: verify `session.json`, `*.db`, `dump/`, `qr.png` and logs are untracked.
 3. **Explicit confirmation required**: never run `git commit` / `git push` until a human approves.
-4. **Commit bodies** use short bullet points, not paragraphs.
+4. **No hook bypass**: never use `--no-verify` unless the human approves and the reason is recorded.
+5. **Atomic sequencing**: sequence multi-step sweeps or migrations into small verifiable units that each end in a passing check before starting the next.
+6. **Commit bodies** use short bullet points, not paragraphs.
 
 ## 5. Review Checklist
 
