@@ -1,5 +1,6 @@
 import { Pin } from "lucide-react";
 import type { ChatMessage } from "@/shared/types/ipc.generated";
+import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 interface PinnedBarProps {
@@ -29,25 +30,27 @@ export function PinnedBar({ pinnedMessages, onJumpToPinned }: PinnedBarProps) {
         <Popover>
           <PopoverTrigger
             render={
-              <button
+              <Button
                 type="button"
-                className="shrink-0 cursor-pointer text-xs font-medium text-foreground tabular-nums hover:underline"
+                variant="link"
+                className="h-auto shrink-0 cursor-pointer p-0 text-xs font-medium text-foreground tabular-nums"
               />
             }
           >
             Xem ({pinnedMessages.length})
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-[340px] p-0">
+          <PopoverContent align="end" className="w-85 p-0">
             <div className="border-b border-border px-3 py-2 text-xs font-semibold text-foreground">
               Tin nhắn đã ghim ({pinnedMessages.length})
             </div>
             <div className="flex max-h-64 flex-col divide-y divide-border overflow-y-auto">
               {pinnedMessages.map((pm, idx) => (
-                <button
+                <Button
                   key={pm.id || pm.client_message_id || `${pm.ts}_${idx}`}
                   type="button"
+                  variant="ghost"
                   onClick={() => onJumpToPinned(pm)}
-                  className="flex w-full cursor-pointer flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-accent"
+                  className="flex h-auto w-full cursor-pointer flex-col items-stretch gap-0.5 rounded-none px-3 py-2 text-left transition-colors hover:bg-accent"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs font-medium text-foreground">
@@ -62,19 +65,20 @@ export function PinnedBar({ pinnedMessages, onJumpToPinned }: PinnedBarProps) {
                   <span className="line-clamp-2 text-xs text-muted-foreground">
                     {pm.text || "[Hình ảnh/Tập tin]"}
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
           </PopoverContent>
         </Popover>
       ) : (
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={() => onJumpToPinned(pinnedMessage)}
-          className="shrink-0 cursor-pointer text-xs font-medium text-foreground hover:underline"
+          className="h-auto shrink-0 cursor-pointer p-0 text-xs font-medium text-foreground"
         >
           Xem
-        </button>
+        </Button>
       )}
     </div>
   );

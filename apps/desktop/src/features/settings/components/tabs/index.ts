@@ -3,7 +3,6 @@ export { AccountTab } from "./account-tab";
 export { PrivacyTab } from "./privacy-tab";
 export { SyncTab } from "./sync-tab";
 export { AppearanceTab } from "./appearance-tab";
-export { NotificationsTab } from "./notifications-tab";
 export { MessagesTab } from "./messages-tab";
 export { UtilitiesTab } from "./utilities-tab";
 export { UpdateTab } from "./update-tab";

@@ -1,4 +1,4 @@
-import { PanelRight, Star, Tag, UserPlus, Users } from "lucide-react";
+import { PanelRight, Star, Users } from "lucide-react";
 import type { Thread } from "@/shared/types/ipc.generated";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Button } from "@/shared/ui/button";
@@ -19,7 +19,6 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
   const inChatSearchQuery = useUIStore((s) => s.inChatSearchQuery);
   const setInChatSearchOpen = useUIStore((s) => s.setInChatSearchOpen);
   const setInChatSearchQuery = useUIStore((s) => s.setInChatSearchQuery);
-  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
   const filterStarredOnly = useChatStore((s) => s.filterStarredOnly);
   const toggleFilterStarredOnly = useChatStore((s) => s.toggleFilterStarredOnly);
   const infoDrawerOpen = useChatStore((s) => s.infoDrawerOpen);
@@ -58,7 +57,6 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
               <>
                 <Users className="h-3 w-3 shrink-0" />
                 <span className="truncate">Nhóm trò chuyện</span>
-                <Tag className="ml-0.5 h-3 w-3 shrink-0 opacity-60" />
               </>
             ) : thread.name.includes("Cloud của tôi") ? (
               "Lưu trữ đám mây cá nhân"
@@ -71,18 +69,6 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
 
       {/* Right-side icon buttons — 32px each */}
       <div className="flex shrink-0 items-center gap-1">
-        {thread.is_group ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Thêm thành viên vào nhóm"
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
-            onClick={() => setPhoneLookupOpen(true)}
-          >
-            <UserPlus className="h-4.5 w-4.5" />
-          </Button>
-        ) : null}
-
         <InChatSearch
           isOpen={inChatSearchOpen}
           query={inChatSearchQuery}
@@ -102,20 +88,22 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
         </Button>
 
         {/* Info panel toggle */}
-        <button
+        <Button
           type="button"
+          variant={infoDrawerOpen ? "secondary" : "ghost"}
+          size="icon"
           title="Thông tin hội thoại"
           aria-pressed={infoDrawerOpen}
           className={cn(
-            "flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors",
+            "h-8 w-8",
             infoDrawerOpen
-              ? "border border-border bg-secondary text-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              ? "border border-border text-foreground"
+              : "text-muted-foreground hover:text-foreground",
           )}
           onClick={toggleInfoDrawer}
         >
           <PanelRight className="h-4.5 w-4.5" />
-        </button>
+        </Button>
       </div>
     </header>
   );

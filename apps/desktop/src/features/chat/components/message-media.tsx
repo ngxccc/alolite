@@ -70,7 +70,7 @@ export function PhotoMessageMedia({
             }}
             onClick={() => onOpenViewer(key, fullUrl)}
             className={cn(
-              "max-h-[320px] max-w-[480px] min-w-[80px] cursor-zoom-in object-contain",
+              "max-h-80 max-w-120 min-w-20 cursor-zoom-in object-contain",
               flush ? "w-full" : "rounded-[6px]",
             )}
           />
@@ -139,11 +139,12 @@ export function VideoMessageMedia({
             setPlaybackError(true);
             onNotify("Không thể phát trực tiếp video này — hãy thử mở ngoài hoặc tải về.");
           }}
-          className="max-h-[300px] max-w-[340px] rounded-[6px] bg-black/90 object-contain"
+          className="max-h-75 max-w-85 rounded-[6px] bg-black/90 object-contain"
         />
       ) : videoUrl ? (
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => {
             if (!inlineVideoSupported) {
               if (blockedClick) {
@@ -158,7 +159,7 @@ export function VideoMessageMedia({
               setPlaying(true);
             }
           }}
-          className="group/vid relative flex min-h-[150px] max-w-[320px] min-w-[220px] cursor-pointer items-center justify-center overflow-hidden rounded-[6px] border border-border bg-black/80"
+          className="group/vid relative flex h-auto min-h-37.5 max-w-80 min-w-55 cursor-pointer items-center justify-center overflow-hidden rounded-[6px] border border-border bg-black/80 p-0"
         >
           {/* HD badge */}
           <span className="absolute top-2 left-2 z-10 rounded bg-black/60 px-1.5 py-0.5 text-xs font-bold text-white">
@@ -170,7 +171,7 @@ export function VideoMessageMedia({
               alt={fileName}
               loading="lazy"
               decoding="async"
-              className="max-h-[260px] w-full object-cover opacity-85 transition group-hover/vid:opacity-100"
+              className="max-h-65 w-full object-cover opacity-85 transition group-hover/vid:opacity-100"
             />
           ) : null}
           <div className="absolute inset-0 flex items-center justify-center">
@@ -185,21 +186,23 @@ export function VideoMessageMedia({
               </span>
             </div>
           ) : null}
-        </button>
+        </Button>
       ) : null}
       {!shouldHideMediaCaption(msg) ? (
         <span className="text-base select-text">{msg.text}</span>
       ) : null}
       {/* Download button for videos */}
       {videoUrl ? (
-        <button
+        <Button
           type="button"
-          className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          variant="ghost"
+          size="xs"
+          className="flex h-auto w-fit items-center gap-1 p-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
           onClick={() => void ipc.downloadFile(videoUrl, fileName, downloadDir)}
         >
           <Download className="h-3.5 w-3.5" />
           Tải xuống
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -241,7 +244,7 @@ export function FileMessageMedia({
   return (
     <div
       className={cn(
-        "flex max-w-[340px] min-w-[240px] items-center justify-between gap-3",
+        "flex max-w-85 min-w-60 items-center justify-between gap-3",
         flush ? "px-3 pt-2.5 pb-1" : "mt-1 rounded-md border border-border bg-background p-2.5",
       )}
     >
@@ -285,7 +288,7 @@ export function LinkPreviewCard({ msg }: { msg: ChatMessage }) {
   return (
     <div
       onClick={() => void ipc.openExternalUrl(msg.link_url!)}
-      className="mt-2 max-w-[360px] cursor-pointer rounded-[6px] border border-border/60 bg-background/50 p-2.5 transition-colors hover:bg-background/80"
+      className="mt-2 max-w-90 cursor-pointer rounded-[6px] border border-border/60 bg-background/50 p-2.5 transition-colors hover:bg-background/80"
     >
       {msg.link_thumb ? (
         <img
@@ -318,7 +321,7 @@ export function LinkPreviewCard({ msg }: { msg: ChatMessage }) {
 
 export function CallCardMedia({ callCard }: { callCard: CallCardMeta }) {
   return (
-    <div className="flex min-w-[200px] items-center gap-2.5">
+    <div className="flex min-w-50 items-center gap-2.5">
       <div
         className={cn(
           "grid h-9 w-9 shrink-0 place-items-center rounded-full",

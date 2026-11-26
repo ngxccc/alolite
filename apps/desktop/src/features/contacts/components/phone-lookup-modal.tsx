@@ -1,6 +1,8 @@
 import { useState, type SyntheticEvent } from "react";
 import { MessageSquare, Search, UserPlus } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
@@ -46,9 +48,9 @@ export function PhoneLookupModal() {
       }}
     >
       {/* Zalo-style: rounded-lg (8px), dark overlay, bg-card body */}
-      <DialogContent className="max-w-[460px] rounded-lg border border-border bg-card p-0 shadow-2xl">
+      <DialogContent className="max-w-115 rounded-lg border border-border bg-card p-0 shadow-2xl">
         {/* Dialog header: bg-background, 52px */}
-        <DialogHeader className="flex h-[52px] flex-row items-center gap-2 rounded-t-lg border-b border-border bg-background px-4">
+        <DialogHeader className="flex h-13 flex-row items-center gap-2 rounded-t-lg border-b border-border bg-background px-4">
           <UserPlus className="h-5 w-5 text-muted-foreground" />
           <DialogTitle className="text-lg font-medium text-foreground">Thêm bạn</DialogTitle>
         </DialogHeader>
@@ -63,12 +65,12 @@ export function PhoneLookupModal() {
             </div>
             {/* Phone number input */}
             <div className="flex h-10 flex-1 items-center rounded-[6px] bg-canvas px-3">
-              <input
+              <Input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="Số điện thoại"
                 autoFocus
-                className="min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 dark:bg-transparent"
               />
             </div>
           </form>
@@ -104,51 +106,54 @@ export function PhoneLookupModal() {
                 </div>
               </div>
               <div className="flex justify-end gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
                   onClick={() => {
                     setActiveSection("chat");
                     setInChatSearchOpen(false);
                     selectThread(p.user_id);
                     setPhoneLookupOpen(false);
                   }}
-                  className="flex h-8 items-center gap-1.5 rounded-[6px] bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-secondary/80"
+                  className="h-8 rounded-[6px] px-4 text-sm font-medium"
                 >
                   <MessageSquare className="h-3.5 w-3.5" /> Nhắn tin
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="default"
                   onClick={() => void ipc.addFriend(p.user_id, p.display_name || p.zalo_name)}
-                  className="flex h-8 items-center gap-1.5 rounded-[6px] bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+                  className="h-8 rounded-[6px] px-4 text-sm font-medium text-white"
                 >
                   <UserPlus className="h-3.5 w-3.5" /> Kết bạn
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
 
           {/* Footer buttons */}
           <div className="flex justify-end gap-2 pt-1">
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => {
                 setPhoneLookupError(null);
                 setPhoneLookupOpen(false);
               }}
-              className="flex h-9 items-center rounded-[6px] bg-secondary px-6 text-sm font-medium text-foreground transition-colors hover:bg-secondary/80"
+              className="h-9 rounded-[6px] px-6 text-sm font-medium"
             >
               Hủy
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
               form="phone-lookup-form"
               onClick={startLookup}
               disabled={phoneLookupLoading}
-              className="flex h-9 items-center gap-1.5 rounded-[6px] bg-primary px-6 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-60"
+              className="h-9 rounded-[6px] px-6 text-sm font-medium text-white"
             >
               <Search className="h-3.5 w-3.5" />
               {phoneLookupLoading ? "Đang tìm…" : "Tìm kiếm"}
-            </button>
+            </Button>
           </div>
         </div>
       </DialogContent>

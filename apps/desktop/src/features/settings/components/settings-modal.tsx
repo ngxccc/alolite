@@ -1,7 +1,6 @@
 import type React from "react";
 import { useEffect } from "react";
 import {
-  Bell,
   Cloud,
   Lock,
   MessageSquare,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { AppSettings } from "@/shared/types/ipc.generated";
+import { Button } from "@/shared/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/shared/ui/dialog";
 import { cn } from "cn";
 import { useAuthStore, useChatStore, useUIStore, type SettingsTab } from "@/stores";
@@ -22,7 +22,6 @@ import {
   AppearanceTab,
   GeneralTab,
   MessagesTab,
-  NotificationsTab,
   PrivacyTab,
   SyncTab,
   UpdateTab,
@@ -40,7 +39,6 @@ const SETTINGS_TABS: {
   { id: "privacy", label: "Quyền riêng tư", icon: Lock },
   { id: "sync", label: "Đồng bộ tin nhắn", icon: Cloud },
   { id: "appearance", label: "Giao diện", icon: Palette },
-  { id: "notifications", label: "Thông báo", icon: Bell },
   { id: "messages", label: "Tin nhắn", icon: MessageSquare },
   { id: "utilities", label: "Tiện ích", icon: Wrench },
   { id: "update", label: "Cập nhật", icon: Sparkles },
@@ -52,7 +50,6 @@ const TAB_COMPONENTS: Record<SettingsTab, React.ComponentType<SettingsTabProps>>
   privacy: PrivacyTab,
   sync: SyncTab,
   appearance: AppearanceTab,
-  notifications: NotificationsTab,
   messages: MessagesTab,
   utilities: UtilitiesTab,
   update: UpdateTab,
@@ -87,11 +84,11 @@ export function SettingsModal() {
     <Dialog open={settingsOpen} onOpenChange={(open) => !open && setSettingsOpen(false)}>
       {/* 653x652 dialog, radius-lg (8px), no default padding */}
       <DialogContent
-        className="flex h-[652px] w-[653px] max-w-[653px] flex-row overflow-hidden rounded-lg p-0"
+        className="flex h-163 w-163.25 max-w-163.25 flex-row gap-0 overflow-hidden rounded-lg p-0"
         showCloseButton={false}
       >
         {/* ── Left nav 186px ── */}
-        <nav className="flex w-[186px] shrink-0 flex-col gap-0.5 overflow-y-auto bg-card px-2 py-4">
+        <nav className="flex w-46.5 shrink-0 flex-col gap-0.5 overflow-y-auto bg-card px-2 py-4">
           <DialogTitle className="mb-2 px-2 text-lg font-medium text-foreground">
             Cài đặt
           </DialogTitle>
@@ -100,18 +97,19 @@ export function SettingsModal() {
             const Icon = item.icon;
             const active = activeSettingsTab === item.id;
             return (
-              <button
+              <Button
                 key={item.id}
                 type="button"
+                variant="ghost"
                 onClick={() => setSettingsOpen(true, item.id)}
                 className={cn(
-                  "flex h-9 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-normal transition-colors",
-                  active ? "bg-accent text-foreground" : "text-foreground hover:bg-white/[0.05]",
+                  "flex h-9 w-full cursor-pointer items-center justify-start gap-2.5 rounded-md px-2.5 text-left text-sm font-normal transition-colors",
+                  active ? "bg-accent text-foreground" : "text-foreground hover:bg-white/5",
                 )}
               >
-                <Icon className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
+                <Icon className="h-4.5 w-4.5 shrink-0 text-muted-foreground" />
                 <span className="truncate">{item.label}</span>
-              </button>
+              </Button>
             );
           })}
         </nav>
@@ -119,13 +117,15 @@ export function SettingsModal() {
         {/* ── Right body bg-canvas ── */}
         <div className="relative flex flex-1 flex-col overflow-hidden bg-canvas">
           {/* Close X */}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             onClick={() => setSettingsOpen(false)}
-            className="absolute top-3 right-3 z-10 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+            className="absolute top-3 right-3 z-10 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-white/8 hover:text-foreground"
           >
-            <X className="h-[18px] w-[18px]" />
-          </button>
+            <X className="h-4.5 w-4.5" />
+          </Button>
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <ActiveTabContent settings={settings} updateSettings={updateSettings} />

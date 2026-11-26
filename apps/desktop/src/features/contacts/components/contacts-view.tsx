@@ -1,17 +1,9 @@
 import { useState } from "react";
-import {
-  ClipboardList,
-  MoreHorizontal,
-  Search,
-  UserPlus,
-  Users,
-  UserCheck,
-  ArrowUpDown,
-  Filter,
-} from "lucide-react";
+import { Search, UserPlus, Users, UserCheck, ArrowUpDown } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Button } from "@/shared/ui/button";
 import { Card } from "@/shared/ui/card";
+import { Input } from "@/shared/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { cn } from "cn";
@@ -34,7 +26,6 @@ const CONTACT_TABS: {
   { id: "friends", label: "Danh sách bạn bè", icon: UserCheck },
   { id: "groups", label: "Danh sách nhóm và cộng đồng", icon: Users },
   { id: "friend_requests", label: "Lời mời kết bạn", icon: UserPlus },
-  { id: "group_invites", label: "Lời mời vào nhóm và cộng đồng", icon: ClipboardList },
 ];
 
 // Header display label for each sub-tab
@@ -42,7 +33,6 @@ const TAB_HEADER: Record<ContactsSubTab, string> = {
   friends: "Danh sách bạn bè",
   groups: "Danh sách nhóm và cộng đồng",
   friend_requests: "Lời mời kết bạn",
-  group_invites: "Lời mời vào nhóm và cộng đồng",
 };
 
 // Caption prefix for each sub-tab
@@ -50,7 +40,6 @@ const TAB_CAPTION: Record<ContactsSubTab, string> = {
   friends: "Bạn bè",
   groups: "Nhóm và cộng đồng",
   friend_requests: "Yêu cầu nhận được",
-  group_invites: "Lời mời nhóm",
 };
 
 type SortKey = "name_asc" | "name_desc" | "recent";
@@ -85,7 +74,6 @@ export function ContactsView() {
   // Per-tab search query (local state)
   const [localSearch, setLocalSearch] = useState("");
   const [userSortKey, setUserSortKey] = useState<SortKey | null>(null);
-  const [filterVal, setFilterVal] = useState("all");
 
   const sortKey: SortKey = userSortKey ?? (sub === "groups" ? "recent" : "name_asc");
 
@@ -93,10 +81,6 @@ export function ContactsView() {
   const rawItems = threads.filter((t) => {
     if (sub === "friend_requests") {
       return !t.is_group && friendStatusMap[t.id] === "IncomingPending";
-    }
-    if (sub === "group_invites") {
-      // group_invites come from a separate IPC source; always empty here
-      return false;
     }
     if (sub === "groups") {
       return t.is_group && !t.name.includes("Cloud của tôi");
@@ -126,42 +110,36 @@ export function ContactsView() {
     const tab = CONTACT_TABS.find((t) => t.id === sub);
     if (!tab) return null;
     const Icon = tab.icon;
-    return <Icon className="h-[18px] w-[18px] text-muted-foreground" />;
+    return <Icon className="h-4.5 w-4.5 text-muted-foreground" />;
   })();
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       {/* Left nav column — 345px */}
-      <aside className="flex h-full w-[345px] shrink-0 flex-col border-r border-border bg-background">
-        {/* Top row: 64px, search + add-friend + create-group */}
+      <aside className="flex h-full w-86.25 shrink-0 flex-col border-r border-border bg-background">
+        {/* Top row: 64px, search + add-friend */}
         <div className="flex h-16 shrink-0 items-center gap-1.5 px-3">
-          {/* Search input 240×32 */}
-          <div className="flex h-8 w-[240px] shrink-0 items-center gap-1.5 rounded-[5px] bg-canvas px-2.5">
+          {/* Search input */}
+          <div className="flex h-8 flex-1 items-center gap-1.5 rounded-[5px] bg-canvas px-2.5">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <input
+            <Input
               value={contactsSearchQuery}
               onChange={(e) => setContactsSearchQuery(e.target.value)}
               placeholder="Tìm kiếm"
-              className="min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
           {/* Add friend button (opens PhoneLookupModal) */}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             title="Thêm bạn"
             onClick={() => setPhoneLookupOpen(true)}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
           >
             <UserPlus className="h-5 w-5" />
-          </button>
-          {/* Create group button */}
-          <button
-            type="button"
-            title="Tạo nhóm"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-          >
-            <Users className="h-5 w-5" />
-          </button>
+          </Button>
         </div>
 
         {/* Nav items */}
@@ -170,16 +148,17 @@ export function ContactsView() {
             const Icon = tab.icon;
             const active = sub === tab.id;
             return (
-              <button
+              <Button
                 key={tab.id}
                 type="button"
+                variant="ghost"
                 onClick={() => {
                   setContactsSubTab(tab.id);
                   setLocalSearch("");
                   setUserSortKey(null);
                 }}
                 className={cn(
-                  "flex h-12 w-full cursor-pointer items-center gap-3 rounded-[6px] px-3 text-left text-sm font-normal transition-colors",
+                  "flex h-12 w-full cursor-pointer items-center justify-start gap-3 rounded-[6px] px-3 text-left text-sm font-normal transition-colors",
                   active ? "bg-accent text-foreground" : "text-foreground hover:bg-foreground/5",
                 )}
               >
@@ -190,7 +169,7 @@ export function ContactsView() {
                   )}
                 />
                 <span className="truncate">{tab.label}</span>
-              </button>
+              </Button>
             );
           })}
         </nav>
@@ -199,16 +178,14 @@ export function ContactsView() {
       {/* Right main area */}
       <main className="flex min-w-0 flex-1 flex-col bg-canvas">
         {/* Header: 52px */}
-        <header className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-border bg-background px-4">
+        <header className="flex h-13 shrink-0 items-center gap-2.5 border-b border-border bg-background px-4">
           {headerIcon}
           <span className="text-base font-medium text-foreground">{TAB_HEADER[sub]}</span>
         </header>
 
         {/* Body (scrollable) */}
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          {sub === "group_invites" ? (
-            <GroupInvitesEmpty />
-          ) : sub === "friend_requests" ? (
+          {sub === "friend_requests" ? (
             <FriendRequestsPanel items={sorted} mediaCache={mediaCache} />
           ) : (
             <ContactListPanel
@@ -219,8 +196,6 @@ export function ContactsView() {
               onSearch={setLocalSearch}
               sortKey={sortKey}
               onSort={setUserSortKey}
-              filterVal={filterVal}
-              onFilter={setFilterVal}
               onSelectThread={openThread}
             />
           )}
@@ -240,8 +215,6 @@ interface ContactListPanelProps {
   onSearch: (q: string) => void;
   sortKey: SortKey;
   onSort: (k: SortKey) => void;
-  filterVal: string;
-  onFilter: (v: string) => void;
   onSelectThread: (threadId: string) => void;
 }
 
@@ -290,11 +263,11 @@ function ContactListPanel({
           {/* Search */}
           <div className="flex h-8 flex-1 items-center gap-1.5 rounded-[5px] bg-canvas px-2.5">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <input
+            <Input
               value={localSearch}
               onChange={(e) => onSearch(e.target.value)}
               placeholder={isGroups ? "Tìm kiếm..." : "Tìm bạn"}
-              className="min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
           {/* Sort select */}
@@ -314,7 +287,7 @@ function ContactListPanel({
             }
             onValueChange={(v) => v && onSort(v)}
           >
-            <SelectTrigger className="h-8 w-auto min-w-[140px] gap-1.5 border-border bg-canvas px-2.5 text-sm">
+            <SelectTrigger className="h-8 w-auto min-w-35 gap-1.5 border-border bg-canvas px-2.5 text-sm">
               <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <SelectValue />
             </SelectTrigger>
@@ -331,16 +304,6 @@ function ContactListPanel({
                   <SelectItem value="name_desc">Tên (Z-A)</SelectItem>
                 </>
               )}
-            </SelectContent>
-          </Select>
-          {/* Filter select */}
-          <Select defaultValue="all" items={[{ value: "all", label: "Tất cả" }]}>
-            <SelectTrigger className="h-8 w-auto min-w-[100px] gap-1.5 border-border bg-canvas px-2.5 text-sm">
-              <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Tất cả</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -406,14 +369,6 @@ function FriendRow({ thread, mediaCache, onSelectThread }: RowProps) {
       <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
         {thread.name}
       </span>
-      <button
-        type="button"
-        onClick={(e) => e.stopPropagation()}
-        className="invisible flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors group-hover:visible hover:bg-foreground/10"
-        title="Tùy chọn"
-      >
-        <MoreHorizontal className="h-4 w-4" />
-      </button>
     </div>
   );
 }
@@ -423,7 +378,7 @@ function GroupRow({ thread, mediaCache, onSelectThread }: RowProps) {
   return (
     <div
       onClick={() => onSelectThread(thread.id)}
-      className="group flex h-[60px] cursor-pointer items-center gap-3 px-4 hover:bg-foreground/5"
+      className="group flex h-15 cursor-pointer items-center gap-3 px-4 hover:bg-foreground/5"
     >
       <UserAvatar
         id={thread.id}
@@ -440,14 +395,6 @@ function GroupRow({ thread, mediaCache, onSelectThread }: RowProps) {
           <div className="text-xs text-muted-foreground">{memberCount} thành viên</div>
         )}
       </div>
-      <button
-        type="button"
-        onClick={(e) => e.stopPropagation()}
-        className="invisible flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors group-hover:visible hover:bg-foreground/10"
-        title="Tùy chọn"
-      >
-        <MoreHorizontal className="h-4 w-4" />
-      </button>
     </div>
   );
 }
@@ -486,7 +433,7 @@ interface FriendRequestCardProps {
 
 function FriendRequestCard({ thread, mediaCache }: FriendRequestCardProps) {
   return (
-    <Card className="w-[397px] gap-0 p-3">
+    <Card className="w-99.25 gap-0 p-3">
       {/* Top row: avatar + name + time + icon */}
       <div className="mb-2 flex items-start gap-3">
         <UserAvatar
@@ -501,13 +448,10 @@ function FriendRequestCard({ thread, mediaCache }: FriendRequestCardProps) {
           <div className="text-base font-medium text-foreground">{thread.name}</div>
           <div className="text-sm text-muted-foreground">{thread.time} - Từ số điện thoại</div>
         </div>
-        <button type="button" className="mt-0.5 text-muted-foreground hover:text-foreground">
-          <ClipboardList className="h-5 w-5" />
-        </button>
       </div>
 
       {/* Message box (read-only textarea appearance) */}
-      <div className="mb-3 min-h-[60px] rounded-md border border-border bg-canvas px-3 py-2 text-sm text-muted-foreground">
+      <div className="mb-3 min-h-15 rounded-md border border-border bg-canvas px-3 py-2 text-sm text-muted-foreground">
         Xin chào, mình là {thread.name}. Mình biết bạn qua số điện thoại.
       </div>
 
@@ -529,25 +473,5 @@ function FriendRequestCard({ thread, mediaCache }: FriendRequestCardProps) {
         </Button>
       </div>
     </Card>
-  );
-}
-
-// ─── Group Invites empty state ────────────────────────────────────────────────
-
-function GroupInvitesEmpty() {
-  return (
-    <div className="flex flex-col items-center justify-center py-20">
-      {/* 104px circle icon */}
-      <div className="mb-5 flex h-[104px] w-[104px] items-center justify-center rounded-full bg-secondary">
-        <ClipboardList className="h-12 w-12 text-muted-foreground" />
-      </div>
-      <div className="mb-1 text-sm font-medium text-foreground">
-        Chưa có lời mời vào nhóm và cộng đồng nào
-      </div>
-      <div className="text-sm text-muted-foreground">
-        Khi nào bạn được mời,{" "}
-        <span className="cursor-pointer text-primary hover:underline">Tìm hiểu thêm</span>
-      </div>
-    </div>
   );
 }

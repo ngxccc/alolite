@@ -139,7 +139,7 @@ export function ReactionPickerContent({ onSelectReaction }: ReactionPickerConten
   const categoryEmojis = EMOJI_CATEGORIES[category] ?? [];
 
   return (
-    <PopoverContent side="top" className="w-[300px] space-y-2 p-2">
+    <PopoverContent side="top" className="w-75 space-y-2 p-2">
       <div className="flex items-center justify-between border-b border-border pb-1 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Ghim & Phổ biến</span>
         <Button
@@ -156,23 +156,27 @@ export function ReactionPickerContent({ onSelectReaction }: ReactionPickerConten
       {/* Pinned row */}
       <div className="flex flex-wrap gap-1">
         {PINNED_REACTIONS.map((em) => (
-          <button
+          <Button
             key={`pin_${em}`}
             type="button"
+            variant="ghost"
+            size="icon-sm"
             className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-base transition-transform hover:scale-120 hover:bg-accent"
             onClick={() => onSelectReaction(em)}
           >
             {em}
-          </button>
+          </Button>
         ))}
       </div>
 
       {/* Category tabs */}
       <div className="no-scrollbar flex items-center gap-0.5 overflow-x-auto border-t border-border pt-1">
         {Object.keys(EMOJI_CATEGORIES).map((catName) => (
-          <button
+          <Button
             key={catName}
             type="button"
+            variant="ghost"
+            size="icon-xs"
             title={catName}
             className={cn(
               "flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded text-sm transition-colors",
@@ -183,21 +187,23 @@ export function ReactionPickerContent({ onSelectReaction }: ReactionPickerConten
             onClick={() => setCategory(catName)}
           >
             {CATEGORY_ICONS[catName] ?? "😀"}
-          </button>
+          </Button>
         ))}
       </div>
 
       {/* Emoji grid for active category */}
       <div className="grid max-h-44 grid-cols-8 gap-1 overflow-y-auto pr-1">
         {categoryEmojis.map((em, idx) => (
-          <button
+          <Button
             key={`${category}_${em}_${idx}`}
             type="button"
+            variant="ghost"
+            size="icon-sm"
             className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-base transition-transform hover:scale-120 hover:bg-accent"
             onClick={() => onSelectReaction(em)}
           >
             {em}
-          </button>
+          </Button>
         ))}
       </div>
     </PopoverContent>

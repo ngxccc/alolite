@@ -20,7 +20,7 @@ export function PhoneSyncModal() {
 
   return (
     <Dialog open={phoneSyncOpen} onOpenChange={(open) => !open && setPhoneSyncOpen(false)}>
-      <DialogContent className="w-[480px] max-w-[480px] rounded-lg p-0">
+      <DialogContent className="w-120 max-w-120 rounded-lg p-0">
         {/* Header */}
         <div className="border-b border-border px-5 py-4">
           <DialogTitle className="text-base font-medium text-foreground">

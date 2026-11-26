@@ -1,46 +1,12 @@
 import { FolderOpen } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import { Button } from "@/shared/ui/button";
-import { RowDivider, SectionHeading, SelectRow, SettingCard, SwitchRow } from "../primitives";
+import { SectionHeading, SettingCard } from "../primitives";
 import type { SettingsTabProps } from "../types";
 
 export function GeneralTab({ settings, updateSettings }: SettingsTabProps) {
   return (
     <>
-      <SectionHeading>Ngôn ngữ</SectionHeading>
-      <SettingCard>
-        <SelectRow
-          label="Thay đổi ngôn ngữ"
-          value={settings.language}
-          onChange={(v) => updateSettings({ language: v })}
-          options={[
-            { value: "Tiếng Việt", label: "Tiếng Việt" },
-            { value: "English", label: "English" },
-          ]}
-        />
-      </SettingCard>
-
-      <SectionHeading>Khởi động</SectionHeading>
-      <SettingCard>
-        <SwitchRow
-          label="Khởi động AloLite cùng hệ thống"
-          checked={settings.autostart_on_boot}
-          onChange={(v) => updateSettings({ autostart_on_boot: v })}
-        />
-        <RowDivider />
-        <SwitchRow
-          label="Ghi nhớ tài khoản đăng nhập"
-          checked={settings.remember_login}
-          onChange={(v) => updateSettings({ remember_login: v })}
-        />
-        <RowDivider />
-        <SwitchRow
-          label="Hiển thị tất cả danh bạ"
-          checked={settings.show_all_contacts}
-          onChange={(v) => updateSettings({ show_all_contacts: v })}
-        />
-      </SettingCard>
-
       <SectionHeading>Thư mục tải xuống</SectionHeading>
       <SettingCard>
         <div className="px-4 py-3">

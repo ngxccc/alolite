@@ -152,9 +152,7 @@ export function MessageBubble({
                 <span className="text-[11px] font-semibold text-foreground">
                   {resolveReplySenderName(msg.reply_to_sender)}
                 </span>
-                <span className="max-w-[300px] truncate text-muted-foreground">
-                  {msg.reply_to_text}
-                </span>
+                <span className="max-w-75 truncate text-muted-foreground">{msg.reply_to_text}</span>
               </div>
             </div>
           ) : null}

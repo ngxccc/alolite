@@ -1,6 +1,6 @@
 export type NavSection = "chat" | "contacts";
 
-export type ContactsSubTab = "friends" | "groups" | "friend_requests" | "group_invites";
+export type ContactsSubTab = "friends" | "groups" | "friend_requests";
 
 export type SettingsTab =
   | "general"
@@ -8,7 +8,6 @@ export type SettingsTab =
   | "privacy"
   | "sync"
   | "appearance"
-  | "notifications"
   | "messages"
   | "utilities"
   | "update";
