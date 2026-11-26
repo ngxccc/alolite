@@ -241,7 +241,7 @@ impl fmt::Debug for SrtpKeyMaterial {
 #[serde(default)]
 pub struct CallSignalWireData {
     pub cmd: Option<Value>,
-    #[serde(rename = "callId", alias = "call_id")]
+    #[serde(rename = "callId", alias = "call_id", alias = "id")]
     pub call_id: Option<Value>,
     #[serde(rename = "sessId", alias = "sess_id")]
     pub sess_id: Option<Value>,
@@ -485,6 +485,15 @@ fn collect_p2p_addrs_from_value(val: &Value, out: &mut Vec<std::net::SocketAddr>
     }
 }
 
+/// Generate a client-side non-zero `callId` in `100_000_000..1_900_000_000` for `11300`.
+fn next_client_call_id() -> u32 {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(100_000_000);
+    ((ms % 1_800_000_000) + 100_000_000) as u32
+}
+
 /// Build `11300` `/api/voicecall/requestcall` parameters.
 pub fn build_request_call_params(
     callee_id: &str,
@@ -494,7 +503,7 @@ pub fn build_request_call_params(
     let type_request = if call_type == 0 { 1 } else { call_type };
     Ok(wire::obj(&[
         ("calleeId", Value::String(callee_id.to_string())),
-        ("callId", Value::from(0)),
+        ("callId", Value::from(next_client_call_id())),
         ("codec", Value::String("[]".to_string())),
         ("typeRequest", Value::from(type_request)),
     ]))
@@ -894,7 +903,7 @@ mod tests {
         let ext = ExtendData::default();
         let req = build_request_call_params("user-2", 0, &ext).unwrap();
         assert_eq!(req["calleeId"], "user-2");
-        assert_eq!(req["callId"], 0);
+        assert!(req["callId"].as_u64().unwrap_or(0) >= 100_000_000);
         assert_eq!(req["typeRequest"], 1);
         assert_eq!(req["codec"], "[]");
 
