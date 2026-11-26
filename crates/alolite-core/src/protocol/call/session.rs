@@ -211,10 +211,7 @@ impl CallSession {
                 self.is_muted = false;
                 self.is_held = false;
                 self.end_reason = None;
-                Ok(vec![
-                    CallEffect::StateChanged(CallState::OutgoingRinging),
-                    CallEffect::StartZrtpAndMedia,
-                ])
+                Ok(vec![CallEffect::StateChanged(CallState::OutgoingRinging)])
             }
 
             CallEvent::IncomingInvite {
@@ -267,6 +264,7 @@ impl CallSession {
                     Ok(vec![
                         CallEffect::StateChanged(CallState::Connecting),
                         CallEffect::SendSignal(CallSignalCode::AnswerAck),
+                        CallEffect::StartZrtpAndMedia,
                     ])
                 } else {
                     self.begin_ending(CallEndReason::Rejected, false, None)
@@ -297,7 +295,14 @@ impl CallSession {
                     return Ok(Vec::new());
                 }
                 self.state = CallState::Active;
-                Ok(vec![CallEffect::StateChanged(CallState::Active)])
+                let mut effects = Vec::with_capacity(2);
+                // Outgoing calls emit 11301 request (416) once ZRTP/media is ready;
+                // incoming calls already emitted 11301 on IncomingInvite.
+                if self.direction == Some(CallDirection::Outgoing) {
+                    effects.push(CallEffect::SendSignal(CallSignalCode::Request));
+                }
+                effects.push(CallEffect::StateChanged(CallState::Active));
+                Ok(effects)
             }
 
             CallEvent::LocalCancel => {
@@ -462,7 +467,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(s.state(), CallState::OutgoingRinging);
-        assert!(eff.contains(&CallEffect::StartZrtpAndMedia));
+        assert!(!eff.contains(&CallEffect::StartZrtpAndMedia));
 
         let eff = s
             .apply(CallEvent::PeerAnswered {
@@ -472,10 +477,17 @@ mod tests {
             .unwrap();
         assert_eq!(s.state(), CallState::Connecting);
         assert!(eff.contains(&CallEffect::SendSignal(CallSignalCode::AnswerAck)));
+        assert!(eff.contains(&CallEffect::StartZrtpAndMedia));
 
         let eff = s.apply(CallEvent::MediaReady { call_id: 100 }).unwrap();
         assert_eq!(s.state(), CallState::Active);
-        assert_eq!(eff, vec![CallEffect::StateChanged(CallState::Active)]);
+        assert_eq!(
+            eff,
+            vec![
+                CallEffect::SendSignal(CallSignalCode::Request),
+                CallEffect::StateChanged(CallState::Active),
+            ]
+        );
 
         let eff = s.apply(CallEvent::LocalEnd).unwrap();
         assert_eq!(s.state(), CallState::Ending);

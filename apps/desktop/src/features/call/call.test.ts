@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { formatCallDuration } from "@/shared/utils/text";
 import { useCallStore } from "@/stores/use-call-store";
-import { formatCallDuration, getCallStatusText } from "./components/active-call-bar";
+import { getCallStatusText } from "./components/active-call-bar";
+import { startIncomingRingtone } from "./components/incoming-call-modal";
 
 describe("call store and active call bar helpers", () => {
   test("useCallStore tracks mute, hold, and selected audio devices", () => {
@@ -35,5 +37,12 @@ describe("call store and active call bar helpers", () => {
     expect(getCallStatusText("outgoing_ringing", 0, false)).toBe("Đang đổ chuông…");
     expect(getCallStatusText("connecting", 0, false)).toBe("Đang kết nối…");
     expect(getCallStatusText("ending", 0, false)).toBe("Đang kết thúc…");
+  });
+
+  test("formatCallDuration clamps negative values and startIncomingRingtone is safe in headless env", () => {
+    expect(formatCallDuration(-5)).toBe("00:00");
+    expect(formatCallDuration(125.9)).toBe("02:05");
+    const stop = startIncomingRingtone();
+    expect(() => stop()).not.toThrow();
   });
 });
