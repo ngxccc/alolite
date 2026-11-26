@@ -121,6 +121,7 @@ pub struct CallSession {
     srtp_mode: u8,
     is_muted: bool,
     is_held: bool,
+    zrtp_ready: bool,
     end_reason: Option<CallEndReason>,
 }
 
@@ -142,6 +143,7 @@ impl CallSession {
             srtp_mode: 1,
             is_muted: false,
             is_held: false,
+            zrtp_ready: false,
             end_reason: None,
         }
     }
@@ -210,8 +212,12 @@ impl CallSession {
                 self.srtp_mode = srtp_mode;
                 self.is_muted = false;
                 self.is_held = false;
+                self.zrtp_ready = false;
                 self.end_reason = None;
-                Ok(vec![CallEffect::StateChanged(CallState::OutgoingRinging)])
+                Ok(vec![
+                    CallEffect::StateChanged(CallState::OutgoingRinging),
+                    CallEffect::StartZrtpAndMedia,
+                ])
             }
 
             CallEvent::IncomingInvite {
@@ -260,12 +266,20 @@ impl CallSession {
                     return Ok(Vec::new());
                 }
                 if accepted {
-                    self.state = CallState::Connecting;
-                    Ok(vec![
-                        CallEffect::StateChanged(CallState::Connecting),
-                        CallEffect::SendSignal(CallSignalCode::AnswerAck),
-                        CallEffect::StartZrtpAndMedia,
-                    ])
+                    if self.zrtp_ready {
+                        self.state = CallState::Active;
+                        Ok(vec![
+                            CallEffect::StateChanged(CallState::Connecting),
+                            CallEffect::SendSignal(CallSignalCode::AnswerAck),
+                            CallEffect::StateChanged(CallState::Active),
+                        ])
+                    } else {
+                        self.state = CallState::Connecting;
+                        Ok(vec![
+                            CallEffect::StateChanged(CallState::Connecting),
+                            CallEffect::SendSignal(CallSignalCode::AnswerAck),
+                        ])
+                    }
                 } else {
                     self.begin_ending(CallEndReason::Rejected, false, None)
                 }
@@ -291,18 +305,25 @@ impl CallSession {
             }
 
             CallEvent::MediaReady { call_id } => {
-                if self.call_id != Some(call_id) || self.state != CallState::Connecting {
+                if self.call_id != Some(call_id) {
                     return Ok(Vec::new());
                 }
-                self.state = CallState::Active;
-                let mut effects = Vec::with_capacity(2);
-                // Outgoing calls emit 11301 request (416) once ZRTP/media is ready;
-                // incoming calls already emitted 11301 on IncomingInvite.
-                if self.direction == Some(CallDirection::Outgoing) {
-                    effects.push(CallEffect::SendSignal(CallSignalCode::Request));
+                match self.state {
+                    CallState::OutgoingRinging
+                        if self.direction == Some(CallDirection::Outgoing) =>
+                    {
+                        self.zrtp_ready = true;
+                        // Emit 11301 request (416) once ZRTP/Echo is ready so the server
+                        // pushes the incoming ring invite to the callee's device.
+                        Ok(vec![CallEffect::SendSignal(CallSignalCode::Request)])
+                    }
+                    CallState::Connecting => {
+                        self.zrtp_ready = true;
+                        self.state = CallState::Active;
+                        Ok(vec![CallEffect::StateChanged(CallState::Active)])
+                    }
+                    _ => Ok(Vec::new()),
                 }
-                effects.push(CallEffect::StateChanged(CallState::Active));
-                Ok(effects)
             }
 
             CallEvent::LocalCancel => {
@@ -444,6 +465,7 @@ impl CallSession {
         self.srtp_mode = 1;
         self.is_muted = false;
         self.is_held = false;
+        self.zrtp_ready = false;
         self.end_reason = None;
     }
 }
@@ -467,7 +489,11 @@ mod tests {
             })
             .unwrap();
         assert_eq!(s.state(), CallState::OutgoingRinging);
-        assert!(!eff.contains(&CallEffect::StartZrtpAndMedia));
+        assert!(eff.contains(&CallEffect::StartZrtpAndMedia));
+
+        let eff = s.apply(CallEvent::MediaReady { call_id: 100 }).unwrap();
+        assert_eq!(s.state(), CallState::OutgoingRinging);
+        assert_eq!(eff, vec![CallEffect::SendSignal(CallSignalCode::Request)]);
 
         let eff = s
             .apply(CallEvent::PeerAnswered {
@@ -475,16 +501,12 @@ mod tests {
                 accepted: true,
             })
             .unwrap();
-        assert_eq!(s.state(), CallState::Connecting);
-        assert!(eff.contains(&CallEffect::SendSignal(CallSignalCode::AnswerAck)));
-        assert!(eff.contains(&CallEffect::StartZrtpAndMedia));
-
-        let eff = s.apply(CallEvent::MediaReady { call_id: 100 }).unwrap();
         assert_eq!(s.state(), CallState::Active);
         assert_eq!(
             eff,
             vec![
-                CallEffect::SendSignal(CallSignalCode::Request),
+                CallEffect::StateChanged(CallState::Connecting),
+                CallEffect::SendSignal(CallSignalCode::AnswerAck),
                 CallEffect::StateChanged(CallState::Active),
             ]
         );

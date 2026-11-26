@@ -17,6 +17,7 @@ pub use signaling::{
     CallSignalCode, CallSignalWireData, ExtendData, RelayServerAddr, SrtpKeyMaterial,
 };
 pub use srtp::{
-    RocTracker, SrtpContext, SRTP_AUTH_TAG_LEN, SRTP_MASTER_KEY_LEN, SRTP_MASTER_SALT_LEN,
+    extract_rtp_payload, RocTracker, SrtpContext, SRTP_AUTH_TAG_LEN, SRTP_MASTER_KEY_LEN,
+    SRTP_MASTER_SALT_LEN,
 };
 pub use zrtp::{P2pKind, P2pSignalSubCmd, ReqForwardSubCmd, ZRTPPacket, ZrtpCmd};

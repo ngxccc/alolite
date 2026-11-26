@@ -700,6 +700,7 @@ fn debug_output_redacts_srtp_keys_salts_relay_and_peer_ips() {
         ip: "198.51.100.7".to_string(),
         port: 3478,
         server_type: 1,
+        ..Default::default()
     };
     let relay_dbg = format!("{relay:?}");
     assert!(!relay_dbg.contains("198.51.100.7"));
