@@ -975,11 +975,11 @@ async fn get_voicecall(
         }
     }
     let resp = session.api_get(spec, Some(&params)).await?;
-    eprintln!(
+    crate::logger::call_debug(&format!(
         "[DEBUG-call] voicecall_resp cmd={} shape={}",
         spec.id,
         debug_json_shape(&resp)
-    );
+    ));
     let env = ErrorEnvelopeWireData::parse(&resp);
     if env.code() != 0 {
         bail!(
