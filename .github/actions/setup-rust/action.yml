@@ -164,19 +164,33 @@ runs:
           sudo apt-get install -y --no-install-recommends mold clang
         fi
 
-    - name: Install Linux GUI build dependencies
+    - name: Install Linux GUI & call audio build dependencies
       if: runner.os == 'Linux' && inputs.gui-dependencies == 'true'
       shell: bash
       run: |
+        missing_pkgs=()
         if ! pkg-config --exists webkit2gtk-4.1; then
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev \
-            libxcb-render0-dev libxcb-shape0-dev \
-            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev \
+          missing_pkgs+=(
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev
+            libxcb-render0-dev libxcb-shape0-dev
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
             libgtk-3-dev libasound2-dev
+          )
+        fi
+        if ! pkg-config --exists opus; then
+          missing_pkgs+=(libopus-dev)
+        fi
+        if ! pkg-config --exists libpulse-simple; then
+          missing_pkgs+=(libpulse-dev)
+        fi
+        if ! pkg-config --exists webrtc-audio-processing-1 && ! pkg-config --exists webrtc-audio-processing; then
+          missing_pkgs+=(libwebrtc-audio-processing-dev)
+        fi
+        if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "${missing_pkgs[@]}"
         else
-          echo "WebKitGTK and GUI dependencies already present (container or system)."
+          echo "WebKitGTK and call audio dependencies already present (container or system)."
         fi
 
     - name: Install Linux packaging tools
