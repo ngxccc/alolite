@@ -282,10 +282,20 @@ impl fmt::Debug for CallSignalWireData {
 }
 
 impl CallSignalWireData {
-    /// Construct from a raw JSON [`Value`], unwrapping `data` envelopes when present.
+    /// Construct from a raw JSON [`Value`], unwrapping `data` envelopes (including JSON-encoded strings) when present.
     pub fn from_value(v: &Value) -> Self {
         let inner = wire::unwrap_data(v);
-        serde_json::from_value(inner.clone()).unwrap_or_default()
+        match inner {
+            Value::String(raw) => {
+                let trimmed = raw.trim();
+                if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+                    serde_json::from_value(parsed).unwrap_or_default()
+                } else {
+                    Self::default()
+                }
+            }
+            other => serde_json::from_value(other.clone()).unwrap_or_default(),
+        }
     }
 
     /// Return the parsed [`CallSignalCode`], if `cmd` matches `401..=416`.
@@ -479,12 +489,14 @@ fn collect_p2p_addrs_from_value(val: &Value, out: &mut Vec<std::net::SocketAddr>
 pub fn build_request_call_params(
     callee_id: &str,
     call_type: u8,
-    extend_data: &ExtendData,
+    _extend_data: &ExtendData,
 ) -> Result<Value> {
+    let type_request = if call_type == 0 { 1 } else { call_type };
     Ok(wire::obj(&[
         ("calleeId", Value::String(callee_id.to_string())),
-        ("callType", Value::from(call_type)),
-        ("extendData", Value::String(extend_data.to_json_string()?)),
+        ("callId", Value::from(0)),
+        ("codec", Value::String("[]".to_string())),
+        ("typeRequest", Value::from(type_request)),
     ]))
 }
 
@@ -498,17 +510,18 @@ pub fn build_request_params(
     Ok(wire::obj(&[
         ("calleeId", Value::String(callee_id.to_string())),
         ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
+        ("codec", Value::String("[]".to_string())),
+        ("session", Value::String(sess_id.to_string())),
         ("extendData", Value::String(extend_data.to_json_string()?)),
+        ("subCommand", Value::from(3)),
     ]))
 }
 
 /// Build `11302` `/api/voicecall/ringring` parameters.
-pub fn build_ring_ring_params(caller_id: &str, call_id: u32, sess_id: &str, status: i32) -> Value {
+pub fn build_ring_ring_params(caller_id: &str, call_id: u32, _sess_id: &str, status: i32) -> Value {
     wire::obj(&[
         ("callerId", Value::String(caller_id.to_string())),
         ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
         ("status", Value::from(status)),
     ])
 }
@@ -521,95 +534,87 @@ pub fn build_answer_params(
     status: i32,
     extend_data: &ExtendData,
 ) -> Result<Value> {
-    Ok(wire::obj(&[
+    let mut fields = vec![
         ("callerId", Value::String(caller_id.to_string())),
         ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
         ("status", Value::from(status)),
         ("extendData", Value::String(extend_data.to_json_string()?)),
-    ]))
+        ("subCommand", Value::from(3)),
+    ];
+    if !sess_id.is_empty() {
+        fields.push(("session_id", Value::String(sess_id.to_string())));
+    }
+    Ok(wire::obj(&fields))
 }
 
 /// Build `11304` `/api/voicecall/answerack` parameters.
-pub fn build_answer_ack_params(callee_id: &str, call_id: u32, sess_id: &str) -> Value {
+pub fn build_answer_ack_params(callee_id: &str, call_id: u32, _sess_id: &str) -> Value {
     wire::obj(&[
         ("calleeId", Value::String(callee_id.to_string())),
         ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
+        ("status", Value::from(0)),
     ])
 }
 
 /// Build `11305` `/api/voicecall/cancel` parameters.
-pub fn build_cancel_params(callee_id: &str, call_id: u32, sess_id: &str) -> Value {
+pub fn build_cancel_params(callee_id: &str, call_id: u32, _sess_id: &str) -> Value {
     wire::obj(&[
-        ("calleeId", Value::String(callee_id.to_string())),
+        ("callerId", Value::String(callee_id.to_string())),
         ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
+        ("callType", Value::from(1)),
+        ("status", Value::from(0)),
     ])
 }
 
 /// Build `11306` `/api/voicecall/endcall` parameters.
-pub fn build_end_call_params(peer_id: &str, call_id: u32, sess_id: &str, reason: i32) -> Value {
+pub fn build_end_call_params(peer_id: &str, call_id: u32, _sess_id: &str, _reason: i32) -> Value {
     wire::obj(&[
-        ("calleeId", Value::String(peer_id.to_string())),
+        ("uidTo", Value::String(peer_id.to_string())),
         ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
-        ("reason", Value::from(reason)),
+        ("status", Value::from(3)),
     ])
 }
 
 /// Build `11307` `/api/voicecall/holdreq` parameters.
-pub fn build_hold_req_params(peer_id: &str, call_id: u32, sess_id: &str) -> Value {
-    wire::obj(&[
-        ("calleeId", Value::String(peer_id.to_string())),
-        ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
-    ])
+pub fn build_hold_req_params(peer_id: &str, _call_id: u32, _sess_id: &str) -> Value {
+    wire::obj(&[("toId", Value::String(peer_id.to_string()))])
 }
 
 /// Build `11308` `/api/voicecall/holdresp` parameters.
-pub fn build_hold_resp_params(peer_id: &str, call_id: u32, sess_id: &str, status: i32) -> Value {
-    wire::obj(&[
-        ("calleeId", Value::String(peer_id.to_string())),
-        ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
-        ("status", Value::from(status)),
-    ])
+pub fn build_hold_resp_params(peer_id: &str, _call_id: u32, _sess_id: &str, _status: i32) -> Value {
+    wire::obj(&[("toId", Value::String(peer_id.to_string()))])
 }
 
 /// Build `11309` `/api/voicecall/unholdreq` parameters.
-pub fn build_unhold_req_params(peer_id: &str, call_id: u32, sess_id: &str) -> Value {
-    wire::obj(&[
-        ("calleeId", Value::String(peer_id.to_string())),
-        ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
-    ])
+pub fn build_unhold_req_params(peer_id: &str, _call_id: u32, _sess_id: &str) -> Value {
+    wire::obj(&[("toId", Value::String(peer_id.to_string()))])
 }
 
 /// Build `11310` `/api/voicecall/unholdresp` parameters.
-pub fn build_unhold_resp_params(peer_id: &str, call_id: u32, sess_id: &str, status: i32) -> Value {
-    wire::obj(&[
-        ("calleeId", Value::String(peer_id.to_string())),
-        ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
-        ("status", Value::from(status)),
-    ])
+pub fn build_unhold_resp_params(
+    peer_id: &str,
+    _call_id: u32,
+    _sess_id: &str,
+    _status: i32,
+) -> Value {
+    wire::obj(&[("toId", Value::String(peer_id.to_string()))])
 }
 
 /// Build `11311` `/api/voicecall/logendcall` parameters.
 pub fn build_log_end_call_params(
     peer_id: &str,
     call_id: u32,
-    sess_id: &str,
+    _sess_id: &str,
     duration_secs: u64,
     status: i32,
 ) -> Value {
     wire::obj(&[
-        ("calleeId", Value::String(peer_id.to_string())),
-        ("callId", Value::from(call_id)),
-        ("sessId", Value::String(sess_id.to_string())),
-        ("duration", Value::from(duration_secs)),
+        ("call_id", Value::from(call_id)),
+        ("partner_id", Value::String(peer_id.to_string())),
         ("status", Value::from(status)),
+        ("logdata", Value::String(String::new())),
+        ("duration", Value::from(duration_secs)),
+        ("role", Value::from(0)),
     ])
 }
 
@@ -633,13 +638,20 @@ pub fn build_conf_params(
     ])
 }
 
-async fn post_voicecall(
+async fn get_voicecall(
     session: &Session,
     spec: crate::protocol::registry::CommandSpec,
-    params: Value,
+    mut params: Value,
+    with_imei: bool,
 ) -> Result<CallSignalWireData> {
     let _ = wire::require_login(session)?;
-    let resp = session.api_post(spec, Some(&params)).await?;
+    if with_imei {
+        if let Some(obj) = params.as_object_mut() {
+            obj.entry("imei")
+                .or_insert_with(|| Value::String(session.imei.clone()));
+        }
+    }
+    let resp = session.api_get(spec, Some(&params)).await?;
     let env = ErrorEnvelopeWireData::parse(&resp);
     if env.code() != 0 {
         bail!(
@@ -663,7 +675,7 @@ pub async fn request_call(
     extend_data: &ExtendData,
 ) -> Result<CallSignalWireData> {
     let params = build_request_call_params(callee_id, call_type, extend_data)?;
-    post_voicecall(session, voice_call::REQUEST_CALL, params).await
+    get_voicecall(session, voice_call::REQUEST_CALL, params, true).await
 }
 
 /// Send `11301` `/api/voicecall/request` after ZRTP initialization.
@@ -678,7 +690,7 @@ pub async fn send_request(
     extend_data: &ExtendData,
 ) -> Result<CallSignalWireData> {
     let params = build_request_params(callee_id, call_id, sess_id, extend_data)?;
-    post_voicecall(session, voice_call::REQUEST, params).await
+    get_voicecall(session, voice_call::REQUEST, params, true).await
 }
 
 /// Send `11302` `/api/voicecall/ringring`.
@@ -693,7 +705,7 @@ pub async fn send_ring_ring(
     status: i32,
 ) -> Result<CallSignalWireData> {
     let params = build_ring_ring_params(caller_id, call_id, sess_id, status);
-    post_voicecall(session, voice_call::RING_RING, params).await
+    get_voicecall(session, voice_call::RING_RING, params, true).await
 }
 
 /// Send `11303` `/api/voicecall/answer` (`status = 0` accept, non-zero reject).
@@ -709,7 +721,7 @@ pub async fn answer_call(
     extend_data: &ExtendData,
 ) -> Result<CallSignalWireData> {
     let params = build_answer_params(caller_id, call_id, sess_id, status, extend_data)?;
-    post_voicecall(session, voice_call::ANSWER, params).await
+    get_voicecall(session, voice_call::ANSWER, params, true).await
 }
 
 /// Send `11304` `/api/voicecall/answerack`.
@@ -723,7 +735,7 @@ pub async fn send_answer_ack(
     sess_id: &str,
 ) -> Result<CallSignalWireData> {
     let params = build_answer_ack_params(callee_id, call_id, sess_id);
-    post_voicecall(session, voice_call::ANSWER_ACK, params).await
+    get_voicecall(session, voice_call::ANSWER_ACK, params, true).await
 }
 
 /// Send `11305` `/api/voicecall/cancel`.
@@ -737,7 +749,7 @@ pub async fn cancel_call(
     sess_id: &str,
 ) -> Result<CallSignalWireData> {
     let params = build_cancel_params(callee_id, call_id, sess_id);
-    post_voicecall(session, voice_call::CANCEL, params).await
+    get_voicecall(session, voice_call::CANCEL, params, true).await
 }
 
 /// Send `11306` `/api/voicecall/endcall`.
@@ -752,7 +764,7 @@ pub async fn end_call(
     reason: i32,
 ) -> Result<CallSignalWireData> {
     let params = build_end_call_params(peer_id, call_id, sess_id, reason);
-    post_voicecall(session, voice_call::END_CALL, params).await
+    get_voicecall(session, voice_call::END_CALL, params, true).await
 }
 
 /// Send `11307` `/api/voicecall/holdreq`.
@@ -766,7 +778,7 @@ pub async fn hold_request(
     sess_id: &str,
 ) -> Result<CallSignalWireData> {
     let params = build_hold_req_params(peer_id, call_id, sess_id);
-    post_voicecall(session, voice_call::HOLD_REQ, params).await
+    get_voicecall(session, voice_call::HOLD_REQ, params, false).await
 }
 
 /// Send `11308` `/api/voicecall/holdresp`.
@@ -781,7 +793,7 @@ pub async fn hold_response(
     status: i32,
 ) -> Result<CallSignalWireData> {
     let params = build_hold_resp_params(peer_id, call_id, sess_id, status);
-    post_voicecall(session, voice_call::HOLD_RESP, params).await
+    get_voicecall(session, voice_call::HOLD_RESP, params, false).await
 }
 
 /// Send `11309` `/api/voicecall/unholdreq`.
@@ -795,7 +807,7 @@ pub async fn unhold_request(
     sess_id: &str,
 ) -> Result<CallSignalWireData> {
     let params = build_unhold_req_params(peer_id, call_id, sess_id);
-    post_voicecall(session, voice_call::UNHOLD_REQ, params).await
+    get_voicecall(session, voice_call::UNHOLD_REQ, params, false).await
 }
 
 /// Send `11310` `/api/voicecall/unholdresp`.
@@ -810,7 +822,7 @@ pub async fn unhold_response(
     status: i32,
 ) -> Result<CallSignalWireData> {
     let params = build_unhold_resp_params(peer_id, call_id, sess_id, status);
-    post_voicecall(session, voice_call::UNHOLD_RESP, params).await
+    get_voicecall(session, voice_call::UNHOLD_RESP, params, false).await
 }
 
 /// Send `11311` `/api/voicecall/logendcall`.
@@ -826,7 +838,7 @@ pub async fn log_end_call(
     status: i32,
 ) -> Result<CallSignalWireData> {
     let params = build_log_end_call_params(peer_id, call_id, sess_id, duration_secs, status);
-    post_voicecall(session, voice_call::LOG_END_CALL, params).await
+    get_voicecall(session, voice_call::LOG_END_CALL, params, true).await
 }
 
 /// Send `12006` `/api/voicecall/conf` (`isOnCam`, `isOnMic`, `data`).
@@ -842,7 +854,7 @@ pub async fn send_conf(
     data: Option<Value>,
 ) -> Result<CallSignalWireData> {
     let params = build_conf_params(callee_id, call_id, is_on_cam, is_on_mic, data);
-    post_voicecall(session, voice_call::CONF, params).await
+    get_voicecall(session, voice_call::CONF, params, false).await
 }
 
 #[cfg(test)]
@@ -882,14 +894,21 @@ mod tests {
         let ext = ExtendData::default();
         let req = build_request_call_params("user-2", 0, &ext).unwrap();
         assert_eq!(req["calleeId"], "user-2");
-        assert_eq!(req["callType"], 0);
-        let parsed_ext = ExtendData::from_value(&req["extendData"]).unwrap();
+        assert_eq!(req["callId"], 0);
+        assert_eq!(req["typeRequest"], 1);
+        assert_eq!(req["codec"], "[]");
+
+        let req_init = build_request_params("user-2", 464564007, "sess-1", &ext).unwrap();
+        assert_eq!(req_init["callId"], 464564007);
+        assert_eq!(req_init["subCommand"], 3);
+        let parsed_ext = ExtendData::from_value(&req_init["extendData"]).unwrap();
         assert_eq!(parsed_ext.srtp_mode, 1); // (INV-8)
 
         let ans = build_answer_params("user-1", 464564007, "sess-1", 0, &ext).unwrap();
         assert_eq!(ans["callerId"], "user-1");
         assert_eq!(ans["callId"], 464564007);
         assert_eq!(ans["status"], 0);
+        assert_eq!(ans["subCommand"], 3);
 
         let conf = build_conf_params("user-2", 464564007, false, true, None);
         assert_eq!(conf["calleeId"], "user-2");
@@ -898,6 +917,8 @@ mod tests {
         assert_eq!(conf["isOnMic"], 1);
 
         let log_end = build_log_end_call_params("user-2", 464564007, "sess-1", 42, 0);
+        assert_eq!(log_end["call_id"], 464564007);
+        assert_eq!(log_end["partner_id"], "user-2");
         assert_eq!(log_end["duration"], 42);
     }
 
