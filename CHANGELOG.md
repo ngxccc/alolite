@@ -3,6 +3,32 @@
 Generated at release time from merged pull requests, by `bun run release`.
 Do not edit by hand; the sections come from the same generator as the GitHub release.
 
+## 0.2.1 - 2026-11-26
+
+<!-- Release notes generated using configuration in .github/release.yml at 41c5940f23235a311b9d3c1ff0e98dddf24d0828 -->
+
+## What's Changed
+
+### Bug Fixes
+
+- fix(chat): trigger mobile confirmation prompt when syncing messages from phone by @ngxccc in https://github.com/ngxccc/alolite/pull/75
+- fix(chat): resolve and preserve real group names after phone sync by @ngxccc in https://github.com/ngxccc/alolite/pull/76
+- fix(store): persist read/unread state and poll cursor across restarts by @ngxccc in https://github.com/ngxccc/alolite/pull/82
+
+### Refactors
+
+- refactor(ui): simplify desktop UI to MVP and add Tailwind/primitives hygiene by @ngxccc in https://github.com/ngxccc/alolite/pull/70
+
+### CI
+
+- chore(repo): refine issue templates and dev-desktop make target by @ngxccc in https://github.com/ngxccc/alolite/pull/78
+
+### Documentation
+
+- docs(standards): align engineering standards and AGENTS.md by @ngxccc in https://github.com/ngxccc/alolite/pull/77
+
+**Full Changelog**: https://github.com/ngxccc/alolite/compare/v0.2.0...v0.2.1
+
 ## 0.2.0 - 2026-11-25
 
 <!-- Release notes generated using configuration in .github/release.yml at 1f6907211fee68b99a8bc8caa43ddc86f3a5c718 -->
