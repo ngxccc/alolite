@@ -6,6 +6,7 @@ export type SettingsTab =
   | "general"
   | "account"
   | "privacy"
+  | "call"
   | "sync"
   | "appearance"
   | "messages"

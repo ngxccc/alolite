@@ -1,5 +1,6 @@
 export { GeneralTab } from "./general-tab";
 export { AccountTab } from "./account-tab";
+export { CallTab } from "./call-tab";
 export { PrivacyTab } from "./privacy-tab";
 export { SyncTab } from "./sync-tab";
 export { AppearanceTab } from "./appearance-tab";

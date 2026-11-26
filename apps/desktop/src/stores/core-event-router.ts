@@ -20,6 +20,7 @@ export function bootstrapStores(snap: CoreBootstrapSnapshot): void {
   const auth = useAuthStore.getState();
   const ui = useUIStore.getState();
   const chat = useChatStore.getState();
+  const call = useCallStore.getState();
   const media = useMediaCacheStore.getState();
 
   auth.setBootstrapped(true, snap.app_version);
@@ -45,6 +46,16 @@ export function bootstrapStores(snap: CoreBootstrapSnapshot): void {
   ui.setThemeMode(tm === "light" || tm === "system" ? tm : "dark");
 
   chat.setSettings(snap.settings);
+  call.setSelectedDevices(
+    snap.settings.selected_mic_device || null,
+    snap.settings.selected_speaker_device || null,
+  );
+  call.setAudioConfig(
+    snap.settings.auto_mic_agc,
+    snap.settings.auto_speaker_agc,
+    snap.settings.mic_gain_percent,
+    snap.settings.speaker_gain_percent,
+  );
   chat.setThreads(sorted);
   chat.selectThread(sorted[0]?.id ?? null);
   chat.setInfoDrawerOpen(snap.settings.info_drawer_open);

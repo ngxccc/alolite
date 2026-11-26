@@ -185,6 +185,9 @@ export const ipc = {
       micPct,
       speakerPct,
     }),
+  startCallMicTest: (micId: string | null, autoMic: boolean, micPct: number) =>
+    call<void>("start_call_mic_test", { micId, autoMic, micPct }),
+  stopCallMicTest: () => call<void>("stop_call_mic_test"),
 
   async openExternalUrl(url: string): Promise<void> {
     if (isTauriRuntime()) {
