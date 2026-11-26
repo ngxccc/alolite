@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::controls::{cancel_phone_sync, clean_sync, request_phone_sync};
+use super::controls::{cancel_phone_sync, request_phone_sync};
 use super::history::PAGE;
 use super::zdb4::generate_sync_public_key;
 use super::{last_mobile_sync_status, next_cursor, set_last_mobile_sync_status, PHONE_SYNC_CANCEL};
@@ -18,7 +18,26 @@ use crate::protocol::messaging::polling::{
 use crate::protocol::messaging::threads::{deduplicate_threads, Thread};
 use crate::protocol::session::Session;
 use crate::protocol::social::groups::resolve_thread_names;
-use crate::protocol::wire::require_login;
+use crate::protocol::wire::{require_login, ActionAck};
+
+/// Validate the [`ActionAck`] returned by `pull_mobile_msg` (`cmd 12000`) and fail fast on non-zero `error_code`.
+pub(crate) fn validate_phone_sync_ack(ack: &ActionAck) -> Result<()> {
+    if let Some(code) = ack.error_code {
+        let msg = ack
+            .error_message
+            .as_deref()
+            .unwrap_or("unknown server error");
+        let user_hint = match code {
+            600 | -102 => {
+                format!("Phiên đăng nhập đã hết hạn (mã {code}), vui lòng đăng nhập lại. ({msg})")
+            }
+            429 => "Thao tác quá nhanh (mã 429), vui lòng thử lại sau.".to_string(),
+            _ => format!("Máy chủ từ chối yêu cầu đồng bộ (mã {code}: {msg})."),
+        };
+        return Err(anyhow::anyhow!("{user_hint}"));
+    }
+    Ok(())
+}
 
 /// Outcome of the pure-network phone synchronization phase.
 #[derive(Debug, Clone)]
@@ -47,12 +66,35 @@ where
 
     if send_phone_prompt {
         set_last_mobile_sync_status(None);
-        let _ = clean_sync(s, &pub_key).await;
         on_progress(
             0.10,
             "Đang gửi yêu cầu đồng bộ tới Zalo trên điện thoại (hãy mở Zalo trên điện thoại và bấm 'Đồng bộ ngay')…".to_string(),
         );
-        let _ = request_phone_sync(s, &pub_key).await;
+        match request_phone_sync(s, &pub_key).await {
+            Ok(ack) => {
+                eprintln!(
+                    "[sync] pull_mobile_msg response: temp_key_present={}, error_code={:?}",
+                    !super::latest_mobile_temp_key().is_empty(),
+                    ack.error_code
+                );
+                if let Err(e) = validate_phone_sync_ack(&ack) {
+                    eprintln!("[sync] pull_mobile_msg failed: {e}");
+                    on_progress(
+                        1.0,
+                        "Không thể gửi yêu cầu đồng bộ tới điện thoại. Vui lòng thử lại hoặc kiểm tra phiên đăng nhập.".to_string(),
+                    );
+                    return Err(e);
+                }
+            }
+            Err(e) => {
+                eprintln!("[sync] pull_mobile_msg failed: {e}");
+                on_progress(
+                    1.0,
+                    "Không thể gửi yêu cầu đồng bộ tới điện thoại. Vui lòng thử lại hoặc kiểm tra phiên đăng nhập.".to_string(),
+                );
+                return Err(e);
+            }
+        }
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
         let mut confirmed = false;
         while std::time::Instant::now() < deadline {
@@ -79,6 +121,9 @@ where
                         before_total,
                         cancelled: true,
                     });
+                } else if st.contains("thất bại") || st.contains("Không thể") {
+                    on_progress(1.0, st.clone());
+                    return Err(anyhow::anyhow!("{st}"));
                 } else {
                     on_progress(0.20, st.clone());
                 }
@@ -109,6 +154,11 @@ where
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
+        } else {
+            let _ = cancel_phone_sync(s, &pub_key).await;
+            return Err(anyhow::anyhow!(
+                "Hết thời gian chờ xác nhận trên điện thoại (90s) — không nhận được phản hồi từ thiết bị di động."
+            ));
         }
     }
 
@@ -252,5 +302,41 @@ pub fn format_phone_sync_final_message(added: usize, active_threads: usize) -> S
         format!("Đã nạp +{added} tin nhắn Cloud/Nhóm ({active_threads} hội thoại)")
     } else {
         "Chưa có tin nhắn mới nào từ điện thoại. Hãy mở Zalo trên điện thoại bấm 'Đồng bộ ngay' hoặc nhập từ file sao lưu (.db / .json).".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_phone_sync_ack_when_error_code_is_zero() {
+        let ack = ActionAck::from_wire(&serde_json::json!({
+            "error_code": 0,
+            "error_message": "Successful."
+        }));
+        assert!(validate_phone_sync_ack(&ack).is_ok());
+    }
+
+    #[test]
+    fn validate_phone_sync_ack_when_server_returns_error_code() {
+        let ack = ActionAck::from_wire(&serde_json::json!({
+            "error_code": 18022,
+            "error_message": "Invalid Signature"
+        }));
+        let err = validate_phone_sync_ack(&ack).unwrap_err().to_string();
+        assert!(err.contains("18022"), "unexpected error: {err}");
+
+        let expired = ActionAck::from_wire(&serde_json::json!({ "error_code": -102 }));
+        assert!(validate_phone_sync_ack(&expired)
+            .unwrap_err()
+            .to_string()
+            .contains("-102"));
+
+        let rate_limited = ActionAck::from_wire(&serde_json::json!({ "error_code": 429 }));
+        assert!(validate_phone_sync_ack(&rate_limited)
+            .unwrap_err()
+            .to_string()
+            .contains("429"));
     }
 }

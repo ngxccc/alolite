@@ -23,35 +23,37 @@ pub async fn request_phone_sync(s: &Session, public_key: &str) -> Result<ActionA
     request_phone_sync_with_temp_key(s, public_key, &temp_key).await
 }
 
+/// Build the plaintext JSON `params` payload for `pullMobileMsg` (`cmd 12000`).
+pub(crate) fn build_pull_mobile_msg_params(
+    computer_name: &str,
+    public_key: &str,
+    temp_key: &str,
+    imei: &str,
+) -> Value {
+    json!({
+        "pc_name": computer_name,
+        "public_key": public_key,
+        "from_seq_id": 0,
+        "is_retry": 0,
+        "min_seq_id": 0,
+        "temp_key": temp_key,
+        "imei": imei
+    })
+}
+
 /// Request mobile message sync (`pullMobileMsg`, cmd `12000`) with an explicit `temp_key`.
 ///
 /// # Errors
-/// Returns an error if the session is unauthenticated or both GET and POST candidates fail.
+/// Returns an error if the session is unauthenticated or the `GET` request fails.
 pub async fn request_phone_sync_with_temp_key(
     s: &Session,
     public_key: &str,
     temp_key: &str,
 ) -> Result<ActionAck> {
     require_login(s)?;
-    let body = json!({
-        "pc_name": s.computer_name,
-        "public_key": public_key,
-        "from_seq_id": 0,
-        "is_retry": 0,
-        "min_seq_id": 0,
-        "temp_key": temp_key,
-        "imei": s.imei
-    });
-    if let Ok(dec) = s
-        .api_get(registry::sync::PULL_MOBILE_MSG, Some(&body))
-        .await
-    {
-        if ErrorEnvelopeWireData::parse(&dec).code_opt() == Some(0) {
-            return Ok(ActionAck::from_wire(&dec));
-        }
-    }
+    let body = build_pull_mobile_msg_params(&s.computer_name, public_key, temp_key, &s.imei);
     let resp = s
-        .api_post(registry::sync::PULL_MOBILE_MSG, Some(&body))
+        .api_get(registry::sync::PULL_MOBILE_MSG, Some(&body))
         .await?;
     Ok(ActionAck::from_wire(&resp))
 }
@@ -246,8 +248,17 @@ pub async fn resolve_znoise_ids(
 /// Mobile sync control event received via WebSocket (`cmd 601`/`602`/`603`) or `lp_control`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MobileSyncControlEvent {
-    /// `act == "transfer_after_login"` — carries `temp_key` issued right after QR scan.
-    TransferAfterLogin { temp_key: String },
+    /// `act == "transfer_after_login"` — carries `temp_key` (and target `imei`) issued right after QR scan.
+    TransferAfterLogin {
+        temp_key: String,
+        imei: Option<String>,
+    },
+    /// `act == "transfer_error"` — mobile rejected the sync request (e.g. `Temp key is wrong!`).
+    TransferError {
+        error_code: i64,
+        error_msg: String,
+        can_retry: bool,
+    },
     /// `act == "transfer_status"` (`status == 3`) — phone displayed confirmation prompt.
     WaitingConfirmOnPhone { sync_id: String },
     /// `act == "user_confirm"` (`user_action == 1 | 3`) or `transfer_status` (`status == 4 | 5`).
@@ -367,6 +378,14 @@ impl MobileSyncControlWireData {
 pub struct MobileSyncDataWireData {
     #[serde(rename = "temp_key")]
     pub temp_key: Option<Value>,
+    #[serde(rename = "imei")]
+    pub imei: Option<Value>,
+    #[serde(rename = "error_code")]
+    pub error_code: Option<Value>,
+    #[serde(rename = "error_msg")]
+    pub error_msg: Option<Value>,
+    #[serde(rename = "can_retry")]
+    pub can_retry: Option<Value>,
     #[serde(rename = "user_action")]
     pub user_action: Option<Value>,
     #[serde(rename = "status")]
@@ -401,6 +420,31 @@ impl MobileSyncDataWireData {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
+    }
+
+    /// Trimmed non-empty `imei`.
+    pub fn imei(&self) -> Option<String> {
+        self.imei
+            .as_ref()
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
+    /// `error_code` for `transfer_error` (`-1` when absent).
+    pub fn error_code(&self) -> i64 {
+        val_i64(self.error_code.as_ref()).unwrap_or(-1)
+    }
+
+    /// `error_msg` for `transfer_error`.
+    pub fn error_msg(&self) -> String {
+        opt_text(self.error_msg.as_ref()).to_string()
+    }
+
+    /// Whether `can_retry == 1`.
+    pub fn can_retry(&self) -> bool {
+        val_i64(self.can_retry.as_ref()).unwrap_or(0) == 1
     }
 
     /// `user_action` as an integer (`-1` when absent).
@@ -482,6 +526,17 @@ pub fn extract_mobile_sync_controls(data_node: &Value) -> Vec<MobileSyncControlE
                 if let Some(tk) = parsed_data.temp_key() {
                     out.push(MobileSyncControlEvent::TransferAfterLogin {
                         temp_key: tk.to_string(),
+                        imei: parsed_data.imei(),
+                    });
+                }
+            }
+            "transfer_error" => {
+                let code = parsed_data.error_code();
+                if code != 0 {
+                    out.push(MobileSyncControlEvent::TransferError {
+                        error_code: code,
+                        error_msg: parsed_data.error_msg(),
+                        can_retry: parsed_data.can_retry(),
                     });
                 }
             }
@@ -589,7 +644,8 @@ mod tests {
             evs,
             vec![
                 MobileSyncControlEvent::TransferAfterLogin {
-                    temp_key: "tk_login_999".into()
+                    temp_key: "tk_login_999".into(),
+                    imei: None,
                 },
                 MobileSyncControlEvent::WaitingConfirmOnPhone {
                     sync_id: "abc123".into()
@@ -607,6 +663,67 @@ mod tests {
                     sync_id: "abc123".into(),
                     batch_type: 0,
                     is_last: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn build_pull_mobile_msg_params_matches_sync_v1_schema() {
+        let params = build_pull_mobile_msg_params(
+            "test-host",
+            "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A",
+            "tk_123",
+            "imei-fake-001",
+        );
+        assert_eq!(params["pc_name"], "test-host");
+        assert_eq!(params["public_key"], "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A");
+        assert_eq!(params["temp_key"], "tk_123");
+        assert_eq!(params["imei"], "imei-fake-001");
+        assert_eq!(params["from_seq_id"], 0);
+        assert_eq!(params["min_seq_id"], 0);
+        assert_eq!(params["is_retry"], 0);
+    }
+
+    #[test]
+    fn extract_mobile_sync_controls_parses_transfer_error_and_imei() {
+        let payload = serde_json::json!({
+            "controls": [
+                {
+                    "content": {
+                        "act_type": "transfer_msg",
+                        "act": "transfer_after_login",
+                        "data": { "temp_key": "tk_1", "imei": "imei-abc" }
+                    }
+                },
+                {
+                    "content": {
+                        "act_type": "syncmsgmb",
+                        "act": "transfer_error",
+                        "data": { "can_retry": 0, "error_code": -1, "error_msg": "Temp key is wrong!" }
+                    }
+                },
+                {
+                    "content": {
+                        "act_type": "syncmsgmb",
+                        "act": "transfer_error",
+                        "data": { "can_retry": 1, "error_code": 0, "error_msg": "Transfer message success" }
+                    }
+                }
+            ]
+        });
+        let evs = extract_mobile_sync_controls(&payload);
+        assert_eq!(
+            evs,
+            vec![
+                MobileSyncControlEvent::TransferAfterLogin {
+                    temp_key: "tk_1".into(),
+                    imei: Some("imei-abc".into()),
+                },
+                MobileSyncControlEvent::TransferError {
+                    error_code: -1,
+                    error_msg: "Temp key is wrong!".into(),
+                    can_retry: false,
                 },
             ]
         );
