@@ -88,7 +88,8 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
             onClick={() => {
               void ipc.startCall(thread.id, thread.name, thread.avatar).catch((err) => {
-                showToast(`Không thể bắt đầu cuộc gọi: ${String(err)}`, "error");
+                console.error("Failed to start call:", err);
+                showToast("Không thể bắt đầu cuộc gọi", "error");
               });
             }}
           >

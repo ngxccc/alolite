@@ -5,7 +5,7 @@
 //! (headless mode ignores `401` invites and never opens local audio devices).
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -87,6 +87,8 @@ struct CallManagerState {
     ring_timer_task: Option<tokio::task::JoinHandle<()>>,
     media_task: Option<tokio::task::JoinHandle<()>>,
     media_cmd_tx: Option<mpsc::UnboundedSender<MediaLoopCmd>>,
+    stop_audio_flag: Option<Arc<AtomicBool>>,
+    audio_thread: Option<std::thread::JoinHandle<()>>,
     selected_mic_id: Option<String>,
     selected_speaker_id: Option<String>,
     audio_device_opened_count: usize,
@@ -99,6 +101,7 @@ pub struct CallManager {
     media_watchdog_timeout: Duration,
     echo_probe_timeout: Duration,
     force_null_audio: bool,
+    srtp_drop_count: AtomicU64,
 }
 
 impl Default for CallManager {
@@ -116,6 +119,7 @@ impl CallManager {
             media_watchdog_timeout: DEFAULT_MEDIA_WATCHDOG_TIMEOUT,
             echo_probe_timeout: DEFAULT_ECHO_PROBE_TIMEOUT,
             force_null_audio: false,
+            srtp_drop_count: AtomicU64::new(0),
         }
     }
 
@@ -131,7 +135,13 @@ impl CallManager {
             media_watchdog_timeout,
             echo_probe_timeout,
             force_null_audio: true,
+            srtp_drop_count: AtomicU64::new(0),
         }
+    }
+
+    /// Number of SRTP packets dropped due to authentication failure (`ADV-3`).
+    pub fn srtp_drop_count(&self) -> u64 {
+        self.srtp_drop_count.load(Ordering::Relaxed)
     }
 
     /// Return a UI-safe snapshot of the current call state without touching `CoreEngine::session`.
@@ -725,7 +735,7 @@ impl CoreEngine {
                     // INV-7 / ADV-2: reject 2nd incoming call in background without touching active call.
                     let s_clone = s_snap.clone();
                     tokio::spawn(async move {
-                        let _ = answer_call(
+                        if let Err(err) = answer_call(
                             &s_clone,
                             &peer_id,
                             call_id,
@@ -733,7 +743,15 @@ impl CoreEngine {
                             1,
                             &ExtendData::default(),
                         )
-                        .await;
+                        .await
+                        {
+                            crate::logger::log_error(
+                                "call::signal",
+                                &format!(
+                                    "busy reject answer_call failed (call_id={call_id}): {err}"
+                                ),
+                            );
+                        }
                     });
                 }
                 CallEffect::StartZrtpAndMedia => {
@@ -753,6 +771,7 @@ impl CoreEngine {
                         g.media_cmd_tx.clone()
                     };
                     if let Some(tx) = tx {
+                        // Best-effort notify media loop; loop may already be exiting.
                         let _ = tx.send(MediaLoopCmd::SetMuted(muted));
                     }
                     self.emit_call_snapshot(None);
@@ -767,6 +786,7 @@ impl CoreEngine {
                         g.media_cmd_tx.clone()
                     };
                     if let Some(tx) = tx {
+                        // Best-effort notify media loop; loop may already be exiting.
                         let _ = tx.send(MediaLoopCmd::SetHeld(held));
                     }
                     self.emit_call_snapshot(None);
@@ -821,9 +841,15 @@ impl CoreEngine {
                 match eff {
                     CallEffect::SendSignal(CallSignalCode::LogEndCall) => {
                         if call_id != 0 && !peer_id.is_empty() && s_snap.has_live_credentials() {
-                            let _ =
+                            if let Err(err) =
                                 log_end_call(s_snap, &peer_id, call_id, &sess_id, duration_secs, 0)
-                                    .await;
+                                    .await
+                            {
+                                crate::logger::log_error(
+                                    "call::signal",
+                                    &format!("log_end_call failed (call_id={call_id}): {err}"),
+                                );
+                            }
                         }
                     }
                     CallEffect::CallFinished { reason, .. } => {
@@ -860,14 +886,26 @@ impl CoreEngine {
         let db_path = self.active_db_path().await;
         let mut sm = StoredMessage::from(msg);
         sm.thread_id = thread_id.to_string();
-        let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(mut store) = MessageStore::open(&db_path) {
+        if let Err(err) = tokio::task::spawn_blocking(move || match MessageStore::open(&db_path) {
+            Ok(mut store) => {
                 if let Err(err) = store.upsert_message(&sm) {
                     crate::logger::log_error("core::call_history_persist", &err.to_string());
                 }
             }
+            Err(err) => {
+                crate::logger::log_error(
+                    "core::call_history_persist",
+                    &format!("MessageStore::open failed: {err}"),
+                );
+            }
         })
-        .await;
+        .await
+        {
+            crate::logger::log_error(
+                "core::call_history_persist",
+                &format!("spawn_blocking join failed: {err}"),
+            );
+        }
     }
 
     async fn dispatch_outbound_signal(&self, s_snap: &Session, sig: CallSignalCode) {
@@ -1024,6 +1062,8 @@ impl CoreEngine {
         let watchdog_timeout = self.call_manager.media_watchdog_timeout;
 
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<MediaLoopCmd>();
+        let stop_audio_flag = Arc::new(AtomicBool::new(false));
+        let stop_audio_for_loop = Arc::clone(&stop_audio_flag);
         let engine = Arc::clone(self);
         let s_clone = s_snap.clone();
 
@@ -1036,53 +1076,99 @@ impl CoreEngine {
                 }
             };
 
-            let relay_addr: Option<SocketAddr> =
-                select_relay_with_echo(&socket, &relays, uid, echo_timeout).await;
+            let relay_addr: Option<SocketAddr> = if relays.is_empty() {
+                None
+            } else {
+                select_relay_with_echo(&socket, &relays, uid, echo_timeout).await
+            };
 
             // Send InitZRTP (cmd = 11 caller / 12 callee) when relay is available.
             let mut server_token = 0u32;
+            let mut zrtp_ready = false;
             if let Some(target) = relay_addr {
                 let init_pkt =
                     ZRTPPacket::init_call(is_caller, 1, uid, call_id, peer_uid, sess_id.clone());
+                // Best-effort initial ZRTP handshake packet; timeout handles loss.
                 let _ = socket.send_to(&init_pkt.encode(), target).await;
 
-                // Wait briefly for InitResponse (0x02) before proceeding.
+                // Wait for InitResponse (0x02) and verify res == 0 before marking media ready.
                 let mut buf = [0u8; 2048];
-                if let Ok(Ok((n, _))) =
-                    tokio::time::timeout(Duration::from_millis(500), socket.recv_from(&mut buf))
-                        .await
+                let deadline = tokio::time::Instant::now() + echo_timeout;
+                while let Ok(Ok((n, _))) =
+                    tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await
                 {
-                    if let Ok(ZRTPPacket::Control { token, .. }) = ZRTPPacket::decode(&buf[..n]) {
-                        server_token = token;
+                    if let Ok(ZRTPPacket::Control {
+                        is_reply: true,
+                        token,
+                        body: ControlBody::Raw(bytes),
+                        ..
+                    }) = ZRTPPacket::decode(&buf[..n])
+                    {
+                        if is_init_response_ok(&bytes) {
+                            server_token = token;
+                            zrtp_ready = true;
+                        } else {
+                            crate::logger::log_error(
+                                "call::zrtp",
+                                "InitResponse returned non-zero status",
+                            );
+                        }
+                        break;
                     }
                 }
             }
 
-            // Transition Connecting -> Active when ZRTP/media is ready.
-            let ready_effects = {
-                let mut g = engine
-                    .call_manager
-                    .state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                g.session
-                    .apply(CallEvent::MediaReady { call_id })
-                    .unwrap_or_default()
-            };
-            if !ready_effects.is_empty() {
-                engine.execute_call_effects(&s_clone, ready_effects).await;
+            if !relays.is_empty() && !zrtp_ready {
+                crate::logger::log_error(
+                    "call::zrtp",
+                    "relay Echo or ZRTP InitResponse failed/timed out; ending call",
+                );
+                let effs = {
+                    let mut g = engine
+                        .call_manager
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    g.session
+                        .apply(CallEvent::MediaWatchdogTimeout)
+                        .unwrap_or_default()
+                };
+                if !effs.is_empty() {
+                    let eng = Arc::clone(&engine);
+                    let sc = s_clone.clone();
+                    tokio::spawn(async move {
+                        eng.execute_call_effects(&sc, effs).await;
+                    });
+                }
+                return;
+            }
+
+            // Emit MediaReady only after ZRTP InitResponse (res == 0) or when running relay-less P2P in tests.
+            if zrtp_ready || (relays.is_empty() && !p2p_cands.is_empty()) {
+                let ready_effects = {
+                    let mut g = engine
+                        .call_manager
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    g.session
+                        .apply(CallEvent::MediaReady { call_id })
+                        .unwrap_or_default()
+                };
+                if !ready_effects.is_empty() {
+                    engine.execute_call_effects(&s_clone, ready_effects).await;
+                }
             }
 
             // EDGE-5: never open hardware audio devices in headless mode.
             let muted_flag = Arc::new(AtomicBool::new(false));
             let held_flag = Arc::new(AtomicBool::new(false));
-            let stop_audio_flag = Arc::new(AtomicBool::new(false));
             let reopen_devices_flag = Arc::new(AtomicBool::new(false));
             let pending_devices = Arc::new(StdMutex::new((init_mic, init_spk)));
             let (tx_pcm_up, mut rx_pcm_up) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
             let (tx_pcm_down, rx_pcm_down) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
 
-            let _audio_thread = if !is_headless
+            let spawned_audio = if !is_headless
                 && !force_null_audio
                 && cfg!(all(feature = "call", target_os = "linux"))
             {
@@ -1097,7 +1183,7 @@ impl CoreEngine {
                 spawn_audio_thread(
                     Arc::clone(&muted_flag),
                     Arc::clone(&held_flag),
-                    Arc::clone(&stop_audio_flag),
+                    Arc::clone(&stop_audio_for_loop),
                     Arc::clone(&reopen_devices_flag),
                     Arc::clone(&pending_devices),
                     tx_pcm_up,
@@ -1108,6 +1194,14 @@ impl CoreEngine {
                 drop(rx_pcm_down);
                 None
             };
+            if let Some(jh) = spawned_audio {
+                let mut g = engine
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.audio_thread = Some(jh);
+            }
 
             let mut srtp_tx = srtp_key
                 .as_ref()
@@ -1141,6 +1235,7 @@ impl CoreEngine {
                     sub_cmd: ReqForwardSubCmd::ChannelPrime as u8,
                     body: ControlBody::ForwardPrime([4, 0, 0, 0, 0, 0, 0, 0]),
                 };
+                // Best-effort REQ_FORWARD subCmd=8 channel prime (`re-notes/16` §3).
                 let _ = socket.send_to(&prime.encode(), target).await;
             }
 
@@ -1175,6 +1270,7 @@ impl CoreEngine {
                                 if send_end_call_pkt {
                                     if let Some(target) = relay_addr {
                                         let end_pkt = ZRTPPacket::end_call(2, uid, server_token, call_id);
+                                        // Best-effort UDP END_CALL packet during teardown.
                                         let _ = socket.send_to(&end_pkt.encode(), target).await;
                                     }
                                 }
@@ -1192,7 +1288,16 @@ impl CoreEngine {
                                     let rtp_pkt = build_minimal_rtp(rtp_seq, &opus_out_buf[..enc_len]);
                                     rtp_seq = rtp_seq.wrapping_add(1);
                                     let wire_rtp = if let Some(ctx) = srtp_tx.as_mut() {
-                                        ctx.protect_rtp(&rtp_pkt).unwrap_or(rtp_pkt)
+                                        match ctx.protect_rtp(&rtp_pkt) {
+                                            Ok(pkt) => pkt,
+                                            Err(e) => {
+                                                crate::logger::log_error(
+                                                    "call::srtp",
+                                                    &format!("SRTP protect failed, dropping RTP packet: {e}"),
+                                                );
+                                                continue;
+                                            }
+                                        }
                                     } else {
                                         rtp_pkt
                                     };
@@ -1203,7 +1308,6 @@ impl CoreEngine {
                         }
                     }
                     Ok((n, src)) = socket.recv_from(&mut recv_buf) => {
-                        last_rx_at = Instant::now();
                         match ZRTPPacket::decode(&recv_buf[..n]) {
                             Ok(ZRTPPacket::RelayMediaDown { msg_type, payload }) => {
                                 if msg_type == MSG_AUDIO_RTP_DOWN
@@ -1213,8 +1317,10 @@ impl CoreEngine {
                                         srtp_rx.as_mut(),
                                         &mut neteq,
                                         &tx_pcm_down,
+                                        &engine.call_manager.srtp_drop_count,
                                     )
                                 {
+                                    last_rx_at = Instant::now();
                                     p2p.on_relay_audio_received(now_ms());
                                 }
                             }
@@ -1234,15 +1340,24 @@ impl CoreEngine {
                                     now_ms(),
                                 );
                                 dispatch_p2p_outbound(&socket, relay_addr, replies).await;
-                                if let P2pRxOutcome::AudioMedia(payload) = outcome {
-                                    if !held_flag.load(Ordering::Relaxed) {
-                                        decode_and_queue_audio(
-                                            &payload,
-                                            srtp_rx.as_mut(),
-                                            &mut neteq,
-                                            &tx_pcm_down,
-                                        );
+                                match outcome {
+                                    P2pRxOutcome::AudioMedia(payload) => {
+                                        if !held_flag.load(Ordering::Relaxed)
+                                            && decode_and_queue_audio(
+                                                &payload,
+                                                srtp_rx.as_mut(),
+                                                &mut neteq,
+                                                &tx_pcm_down,
+                                                &engine.call_manager.srtp_drop_count,
+                                            )
+                                        {
+                                            last_rx_at = Instant::now();
+                                        }
                                     }
+                                    P2pRxOutcome::Handled | P2pRxOutcome::AudioRtcp(_) => {
+                                        last_rx_at = Instant::now();
+                                    }
+                                    P2pRxOutcome::Drop => {}
                                 }
                             }
                             Ok(ZRTPPacket::Control {
@@ -1253,11 +1368,13 @@ impl CoreEngine {
                                 ..
                             }) => {
                                 if is_reply {
+                                    last_rx_at = Instant::now();
                                     if token != 0 {
                                         server_token = token;
                                     }
                                     p2p.on_server_reply(cmd, token);
                                 } else if cmd == ZrtpCmd::ReqForward as u16 {
+                                    last_rx_at = Instant::now();
                                     let replies = p2p.on_req_forward(sub_cmd);
                                     dispatch_p2p_outbound(&socket, relay_addr, replies).await;
                                 }
@@ -1268,6 +1385,7 @@ impl CoreEngine {
                     _ = ping_tick.tick() => {
                         if let Some(target) = relay_addr {
                             let ping = ZRTPPacket::ping(0, uid, server_token, sess_id.clone());
+                            // Best-effort keepalive ping to relay server.
                             let _ = socket.send_to(&ping.encode(), target).await;
                         }
                     }
@@ -1304,7 +1422,24 @@ impl CoreEngine {
                 }
             }
 
-            stop_audio_flag.store(true, Ordering::Relaxed);
+            stop_audio_for_loop.store(true, Ordering::Relaxed);
+            let remaining_audio = {
+                let mut g = engine
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.audio_thread.take()
+            };
+            if let Some(jh) = remaining_audio {
+                // Best-effort join on blocking pool so Tokio worker thread is never blocked.
+                let _ = tokio::task::spawn_blocking(move || {
+                    if jh.join().is_err() {
+                        crate::logger::log_error("call::audio", "audio thread panicked");
+                    }
+                })
+                .await;
+            }
         });
 
         let mut g = self
@@ -1314,23 +1449,62 @@ impl CoreEngine {
             .unwrap_or_else(|e| e.into_inner());
         g.media_cmd_tx = Some(cmd_tx);
         g.media_task = Some(handle);
+        g.stop_audio_flag = Some(stop_audio_flag);
     }
 
     async fn stop_media_loop(&self, send_end_call_pkt: bool) {
-        let (tx, handle) = {
+        let (tx, handle, stop_flag, audio_thread) = {
             let mut g = self
                 .call_manager
                 .state
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            (g.media_cmd_tx.take(), g.media_task.take())
+            (
+                g.media_cmd_tx.take(),
+                g.media_task.take(),
+                g.stop_audio_flag.take(),
+                g.audio_thread.take(),
+            )
         };
         if let Some(tx) = tx {
+            // Best-effort signal media loop to stop; task may already have exited.
             let _ = tx.send(MediaLoopCmd::Stop { send_end_call_pkt });
         }
         if let Some(h) = handle {
-            let _ = tokio::time::timeout(Duration::from_secs(2), h).await;
+            let abort_handle = h.abort_handle();
+            if tokio::time::timeout(Duration::from_secs(2), h)
+                .await
+                .is_err()
+            {
+                crate::logger::log_error(
+                    "call::media",
+                    "media loop teardown timed out; aborting task",
+                );
+                abort_handle.abort();
+            }
         }
+        if let Some(flag) = stop_flag {
+            flag.store(true, Ordering::Relaxed);
+        }
+        if let Some(jh) = audio_thread {
+            // Best-effort join on blocking pool so Tokio worker thread is never blocked.
+            let _ = tokio::task::spawn_blocking(move || {
+                if jh.join().is_err() {
+                    crate::logger::log_error("call::audio", "audio thread panicked");
+                }
+            })
+            .await;
+        }
+    }
+}
+
+fn is_init_response_ok(payload: &[u8]) -> bool {
+    if payload.len() >= 4 {
+        i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) == 0
+    } else if !payload.is_empty() {
+        payload.iter().all(|&b| b == 0)
+    } else {
+        false
     }
 }
 
@@ -1340,10 +1514,9 @@ async fn select_relay_with_echo(
     uid: u32,
     timeout: Duration,
 ) -> Option<SocketAddr> {
-    let first_addr: Option<SocketAddr> = relays
-        .iter()
-        .find_map(|r| format!("{}:{}", r.ip, r.port).parse::<SocketAddr>().ok());
-    let fallback = first_addr?;
+    if relays.is_empty() {
+        return None;
+    }
 
     let echo_pkt = ZRTPPacket::Control {
         is_reply: false,
@@ -1359,6 +1532,7 @@ async fn select_relay_with_echo(
     let encoded = echo_pkt.encode();
     for r in relays {
         if let Ok(addr) = format!("{}:{}", r.ip, r.port).parse::<SocketAddr>() {
+            // Best-effort Echo probe to candidate relay server.
             let _ = socket.send_to(&encoded, addr).await;
         }
     }
@@ -1367,7 +1541,7 @@ async fn select_relay_with_echo(
     if let Ok(Ok((_n, from))) = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await {
         return Some(from);
     }
-    Some(fallback)
+    None
 }
 
 fn build_minimal_rtp(seq: u16, payload: &[u8]) -> Vec<u8> {
@@ -1386,11 +1560,22 @@ fn decode_and_queue_audio(
     srtp_rx: Option<&mut SrtpContext>,
     neteq: &mut NetEq<Box<dyn OpusDecoderBackend>>,
     tx_pcm_down: &mpsc::Sender<[i16; FRAME_SAMPLES]>,
+    srtp_drop_count: &AtomicU64,
 ) -> bool {
     let plain_rtp = if let Some(ctx) = srtp_rx {
         match ctx.unprotect_rtp(payload) {
             Ok(p) => p,
-            Err(_) => return false, // ADV-3: drop bad SRTP HMAC
+            Err(_) => {
+                // ADV-3: drop bad SRTP HMAC and track redacted drop count.
+                let count = srtp_drop_count.fetch_add(1, Ordering::Relaxed) + 1;
+                if count == 1 || count.is_power_of_two() {
+                    crate::logger::log_error(
+                        "call::srtp",
+                        &format!("ADV-3: dropped unauthenticated SRTP packet (total={count})"),
+                    );
+                }
+                return false;
+            }
         }
     } else {
         payload.to_vec()
@@ -1400,6 +1585,7 @@ fn decode_and_queue_audio(
         neteq.push(seq, plain_rtp[12..].to_vec());
         let mut out_pcm = [0i16; FRAME_SAMPLES];
         if neteq.pop_frame(&mut out_pcm).is_ok() {
+            // Best-effort push decoded PCM to playback ring; drop frame if full.
             let _ = tx_pcm_down.try_send(out_pcm);
         }
         true
@@ -1416,10 +1602,12 @@ async fn dispatch_p2p_outbound(
     for item in pkts {
         match item {
             P2pOutbound::ToPeer(addr, pkt) => {
+                // Best-effort UDP send to peer P2P address.
                 let _ = socket.send_to(&pkt.encode(), addr).await;
             }
             P2pOutbound::ToRelay(pkt) => {
                 if let Some(relay) = relay_addr {
+                    // Best-effort UDP send to relay server.
                     let _ = socket.send_to(&pkt.encode(), relay).await;
                 }
             }
@@ -1957,5 +2145,305 @@ mod tests {
         let (mic, spk) = engine.call_manager.selected_devices();
         assert_eq!(mic.as_deref(), Some("alsa_input.usb"));
         assert_eq!(spk, None);
+    }
+
+    #[tokio::test]
+    async fn outgoing_call_transitions_ringing_connecting_active_with_init_response_ok() {
+        let relay_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_sock.local_addr().unwrap();
+
+        let relay_task = tokio::spawn(async move {
+            let mut buf = [0u8; 512];
+            for _ in 0..4 {
+                if let Ok(Ok((n, from))) =
+                    tokio::time::timeout(Duration::from_secs(2), relay_sock.recv_from(&mut buf))
+                        .await
+                {
+                    if let Ok(ZRTPPacket::Control { cmd, seq, uid, .. }) =
+                        ZRTPPacket::decode(&buf[..n])
+                    {
+                        if cmd == ZrtpCmd::Echo as u16 {
+                            let reply = ZRTPPacket::Control {
+                                is_reply: true,
+                                magic: 1,
+                                field02: 0,
+                                seq,
+                                uid,
+                                token: 0,
+                                cmd,
+                                sub_cmd: 0,
+                                body: ControlBody::Raw(vec![0, 0, 0, 0]),
+                            };
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                        } else if cmd == ZrtpCmd::InitCallCaller as u16 {
+                            let reply = ZRTPPacket::Control {
+                                is_reply: true,
+                                magic: 1,
+                                field02: 0,
+                                seq,
+                                uid,
+                                token: 0x1234_5678,
+                                cmd,
+                                sub_cmd: 0,
+                                body: ControlBody::Raw(vec![0, 0, 0, 0]),
+                            };
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+            Duration::from_millis(500),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        let start_effects = {
+            let mut g = engine.call_manager.state.lock().unwrap();
+            g.relay_servers = vec![RelayServerAddr {
+                ip: relay_addr.ip().to_string(),
+                port: relay_addr.port(),
+                server_type: 0,
+            }];
+            g.session
+                .apply(CallEvent::StartOutgoing {
+                    call_id: 7001,
+                    sess_id: "sess-7001".to_string(),
+                    peer_id: "peer-out-1".to_string(),
+                    srtp_mode: 1,
+                })
+                .unwrap()
+        };
+        engine.execute_call_effects(&s_snap, start_effects).await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::OutgoingRinging);
+        assert!(engine.call_snapshot().started_at_ms.is_none());
+
+        // Peer 402 (accepted) -> Connecting -> Echo + InitZRTP -> InitResponse(res=0) -> Active.
+        let ans_sig = CallSignalWireData::from_value(&json!({
+            "cmd": 402,
+            "callId": 7001,
+            "sessId": "sess-7001",
+            "callerId": "self-1",
+            "calleeId": "peer-out-1",
+            "status": 0,
+            "isVideo": 0
+        }));
+        engine.handle_voip_signal(&s_snap, ans_sig).await;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if engine.call_snapshot().phase == CallPhase::Active {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("outgoing call should reach Active");
+
+        let snap = engine.call_snapshot();
+        assert_eq!(snap.phase, CallPhase::Active);
+        assert!(snap.started_at_ms.is_some());
+
+        engine.end_call().await.unwrap();
+        let _ = relay_task.await;
+    }
+
+    #[tokio::test]
+    async fn outgoing_call_ends_when_init_response_fails() {
+        let relay_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_sock.local_addr().unwrap();
+
+        let relay_task = tokio::spawn(async move {
+            let mut buf = [0u8; 512];
+            for _ in 0..4 {
+                if let Ok(Ok((n, from))) =
+                    tokio::time::timeout(Duration::from_secs(2), relay_sock.recv_from(&mut buf))
+                        .await
+                {
+                    if let Ok(ZRTPPacket::Control { cmd, seq, uid, .. }) =
+                        ZRTPPacket::decode(&buf[..n])
+                    {
+                        if cmd == ZrtpCmd::Echo as u16 {
+                            let reply = ZRTPPacket::Control {
+                                is_reply: true,
+                                magic: 1,
+                                field02: 0,
+                                seq,
+                                uid,
+                                token: 0,
+                                cmd,
+                                sub_cmd: 0,
+                                body: ControlBody::Raw(vec![0, 0, 0, 0]),
+                            };
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                        } else if cmd == ZrtpCmd::InitCallCaller as u16 {
+                            // Return non-zero error code (res = 1).
+                            let reply = ZRTPPacket::Control {
+                                is_reply: true,
+                                magic: 1,
+                                field02: 0,
+                                seq,
+                                uid,
+                                token: 0,
+                                cmd,
+                                sub_cmd: 0,
+                                body: ControlBody::Raw(vec![1, 0, 0, 0]),
+                            };
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+            Duration::from_millis(200),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        let start_effects = {
+            let mut g = engine.call_manager.state.lock().unwrap();
+            g.relay_servers = vec![RelayServerAddr {
+                ip: relay_addr.ip().to_string(),
+                port: relay_addr.port(),
+                server_type: 0,
+            }];
+            g.session
+                .apply(CallEvent::StartOutgoing {
+                    call_id: 7002,
+                    sess_id: "sess-7002".to_string(),
+                    peer_id: "peer-out-2".to_string(),
+                    srtp_mode: 1,
+                })
+                .unwrap()
+        };
+        engine.execute_call_effects(&s_snap, start_effects).await;
+
+        let ans_sig = CallSignalWireData::from_value(&json!({
+            "cmd": 402,
+            "callId": 7002,
+            "sessId": "sess-7002",
+            "callerId": "self-1",
+            "calleeId": "peer-out-2",
+            "status": 0,
+            "isVideo": 0
+        }));
+        engine.handle_voip_signal(&s_snap, ans_sig).await;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if engine.call_snapshot().phase == CallPhase::Idle {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("call should transition to Idle when InitResponse fails");
+
+        {
+            let captured = events.lock().unwrap();
+            assert!(!captured.iter().any(|ev| matches!(
+                ev,
+                CoreEvent::CallStateChanged {
+                    phase: CallPhase::Active,
+                    ..
+                }
+            )));
+        }
+        let _ = relay_task.await;
+    }
+
+    #[tokio::test]
+    async fn forged_srtp_increments_drop_counter_and_does_not_reset_watchdog() {
+        let peer_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer_sock.local_addr().unwrap();
+
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_millis(120),
+            Duration::from_millis(50),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        let sig = CallSignalWireData::from_value(&json!({
+            "cmd": 401,
+            "callId": 7003,
+            "sessId": "sess-7003",
+            "callerId": "peer-7003",
+            "calleeId": "self-1",
+            "isVideo": 0,
+            "srtpKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "extendData": {
+                "srtpMode": 1,
+                "maxFT": 60,
+                "extraInfo": { "p2pAddr": format!("{}|{}", peer_addr.ip(), peer_addr.port()) }
+            }
+        }));
+        engine.handle_voip_signal(&s_snap, sig).await;
+        engine.answer_call(true).await.unwrap();
+
+        // Receive P2P.BIND so we learn engine_addr.
+        let mut buf = [0u8; 256];
+        let (_n, engine_addr) =
+            tokio::time::timeout(Duration::from_secs(2), peer_sock.recv_from(&mut buf))
+                .await
+                .unwrap()
+                .unwrap();
+
+        // Send forged unauthenticated P2P.AUDIO (kind=6) every 30ms for 210ms (> 120ms watchdog).
+        for i in 0..7u16 {
+            let forged = ZRTPPacket::P2p {
+                magic: 0x00,
+                sender_role: 0, // caller (callee own_role is 1)
+                call_id: 7003,
+                kind: crate::protocol::call::P2pKind::Audio,
+                body: crate::protocol::call::zrtp::P2pBody::Media(vec![
+                    0x80, 111, 0, i as u8, 0, 0, 0, 0, 0, 0, 0, 1, 0xaa, 0xbb,
+                ]),
+            };
+            let _ = peer_sock.send_to(&forged.encode(), engine_addr).await;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+
+        // Watchdog must still fire because forged SRTP packets must NOT refresh last_rx_at.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if engine.call_snapshot().phase == CallPhase::Idle {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("watchdog must fire despite forged SRTP packets");
+
+        assert!(engine.call_manager.srtp_drop_count() >= 1);
     }
 }

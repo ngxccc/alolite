@@ -1,4 +1,5 @@
 import type { CallOutcome, ChatMessage, StickerItem } from "@/shared/types/ipc.generated";
+import { formatCallDuration } from "@/shared/utils/text";
 
 export function stickerCacheKey(stickerId: number, cateId = 0): string {
   return `stk_${cateId}_${stickerId}`;
@@ -34,12 +35,6 @@ export interface CallCardMeta {
   isVideo: boolean;
   outcome?: CallOutcome;
   isOutgoing?: boolean;
-}
-
-export function formatCallDuration(durationSecs: number): string {
-  const mins = Math.floor(durationSecs / 60);
-  const secs = Math.floor(durationSecs % 60);
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 export function parseCallCard(msg: ChatMessage): CallCardMeta | null {

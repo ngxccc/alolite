@@ -21,14 +21,8 @@ import {
 } from "@/shared/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { UserAvatar } from "@/shared/ui/user-avatar";
+import { formatCallDuration } from "@/shared/utils/text";
 import { useCallStore, useMediaCacheStore, useUIStore } from "@/stores";
-
-export function formatCallDuration(totalSeconds: number): string {
-  const safe = Math.max(0, Math.floor(totalSeconds));
-  const mins = Math.floor(safe / 60);
-  const secs = safe % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
 
 export function getCallStatusText(phase: CallPhase, elapsedSecs: number, isHeld: boolean): string {
   if (phase === "outgoing_ringing") {
@@ -89,7 +83,8 @@ export function ActiveCallBar() {
     try {
       await ipc.setCallMuted(!isMuted);
     } catch (err) {
-      showToast(`Không thể đổi trạng thái mic: ${String(err)}`, "error");
+      console.error("Failed to toggle call mute:", err);
+      showToast("Không thể đổi trạng thái mic", "error");
     }
   };
 
@@ -97,7 +92,8 @@ export function ActiveCallBar() {
     try {
       await ipc.setCallHeld(!isHeld);
     } catch (err) {
-      showToast(`Không thể đổi trạng thái tạm giữ: ${String(err)}`, "error");
+      console.error("Failed to toggle call hold:", err);
+      showToast("Không thể đổi trạng thái tạm giữ", "error");
     }
   };
 
@@ -111,7 +107,8 @@ export function ActiveCallBar() {
       const list = await ipc.listAudioDevices();
       setDevices(list);
     } catch (err) {
-      showToast(`Không thể tải danh sách thiết bị âm thanh: ${String(err)}`, "error");
+      console.error("Failed to list audio devices:", err);
+      showToast("Không thể tải danh sách thiết bị âm thanh", "error");
     } finally {
       setLoadingDevices(false);
     }
@@ -123,7 +120,8 @@ export function ActiveCallBar() {
     try {
       await ipc.setCallDevices(nextMic, selectedSpeakerId);
     } catch (err) {
-      showToast(`Không thể đổi micro: ${String(err)}`, "error");
+      console.error("Failed to change microphone:", err);
+      showToast("Không thể đổi micro", "error");
     }
   };
 
@@ -133,7 +131,8 @@ export function ActiveCallBar() {
     try {
       await ipc.setCallDevices(selectedMicId, nextSpeaker);
     } catch (err) {
-      showToast(`Không thể đổi loa: ${String(err)}`, "error");
+      console.error("Failed to change speaker:", err);
+      showToast("Không thể đổi loa", "error");
     }
   };
 
@@ -141,7 +140,8 @@ export function ActiveCallBar() {
     try {
       await ipc.endCall();
     } catch (err) {
-      showToast(`Không thể kết thúc cuộc gọi: ${String(err)}`, "error");
+      console.error("Failed to end call:", err);
+      showToast("Không thể kết thúc cuộc gọi", "error");
     }
   };
 
