@@ -163,3 +163,14 @@ stateDiagram-v2
    - `CallManager` state machine (`INV-7`, `ADV-1..ADV-4`, `EDGE-5` headless guard).
 2. **Feature-Gated Build Check**: Verify both `cargo check --workspace` (default, no `libopus-dev` required) and `cargo check --workspace --features call` (with system `libopus` + `libpulse-simple`).
 3. **Live Verification**: 1-1 outgoing & incoming audio call against official Zalo mobile/desktop client, including Wi-Fi/hotspot handover test (`cmd=14` + `REQ_FORWARD subCmd=2`).
+
+---
+
+## Audio Diagnostics & Debugging
+
+- **Persistent Call Telemetry (`call-debug.log`)**: Enabled by `crates/alolite-desktop/src/main.rs` via `logger::enable_call_log(&data_dir.join("call-debug.log"))`. Logs redacted per-second counters (`media_stats`, `capture_stats`, `playout_stats`, `first_tx_rtp`, `capture_open`/`playback_open`, `apm_delay_ms`) with zero secrets or credentials (`INV-8`).
+- **3-Channel WAV Dump (`ALOLITE_CALL_DUMP_WAV`)**: Disabled by default (`crates/alolite-core/src/services/call_media/wav_dump.rs`). Enable only for local AEC/NS/AGC DSP inspection:
+  - Set `ALOLITE_CALL_DUMP_WAV=1` (writes `<data_dir>/call-dump-<call_id>.wav`, e.g. `~/.local/share/alolite/call-dump-<call_id>.wav`) or `ALOLITE_CALL_DUMP_WAV=/custom/dir`.
+  - Format: `16000 Hz`, `16-bit` signed PCM, `3` interleaved channels (`ch0 = mic_raw` pre-APM, `ch1 = mic_proc` post-APM/AGC, `ch2 = speaker_render` playout & AEC reference).
+  - Non-blocking: capture and playout threads push frames via bounded `SyncSender::try_send` (`256` frames) to the dedicated `alolite-wav-dump` writer thread so the 20 ms PulseAudio clock never stalls on disk I/O (`INV-9`).
+  - **Privacy**: Delete `call-dump-*.wav` immediately after analysis; never commit `.wav` dumps.
