@@ -75,6 +75,80 @@ export function reconcileSentMessage(thread: Thread, msg: ChatMessage): Thread {
   };
 }
 
+export function compareNumericIds(a: string, b: string): number | null {
+  if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) return null;
+  const na = a.replace(/^0+/, "") || "0";
+  const nb = b.replace(/^0+/, "") || "0";
+  if (na.length !== nb.length) return na.length < nb.length ? -1 : 1;
+  return na === nb ? 0 : na < nb ? -1 : 1;
+}
+
+export function advanceUnreadSeenFromMessages(thread: Thread): void {
+  let newest = thread.unread.last_seen_id;
+  for (const m of thread.messages) {
+    if (!m.id || !/^\d+$/.test(m.id)) continue;
+    if (newest == null) {
+      newest = m.id;
+    } else {
+      const cmp = compareNumericIds(m.id, newest);
+      if (cmp != null && cmp > 0) {
+        newest = m.id;
+      }
+    }
+  }
+  thread.unread.last_seen_id = newest;
+  thread.unread.unread_ids = [];
+  thread.unread.mention_ids = [];
+  thread.unread.marked_unread = false;
+}
+
+export function mergeUnreadState(
+  existing: Thread["unread"],
+  incoming: Thread["unread"],
+): Thread["unread"] {
+  let lastSeen = existing.last_seen_id;
+  if (incoming.last_seen_id != null) {
+    if (lastSeen == null) {
+      lastSeen = incoming.last_seen_id;
+    } else {
+      const cmp = compareNumericIds(incoming.last_seen_id, lastSeen);
+      if (cmp != null && cmp >= 0) {
+        lastSeen = incoming.last_seen_id;
+      }
+    }
+  }
+  const combinedUnread = new Set([...existing.unread_ids, ...incoming.unread_ids]);
+  const unreadIds = Array.from(combinedUnread).filter((id) => {
+    if (lastSeen == null) return true;
+    const cmp = compareNumericIds(id, lastSeen);
+    return cmp == null || cmp > 0;
+  });
+  const unreadSet = new Set(unreadIds);
+  const mentionIds = Array.from(new Set([...existing.mention_ids, ...incoming.mention_ids])).filter(
+    (id) => unreadSet.has(id),
+  );
+
+  const incomingHasState =
+    incoming.last_seen_id != null ||
+    incoming.unread_ids.length > 0 ||
+    incoming.marked_unread ||
+    incoming.muted;
+
+  return {
+    last_seen_id: lastSeen,
+    unread_ids: unreadIds,
+    mention_ids: mentionIds,
+    muted: incomingHasState ? incoming.muted : existing.muted,
+    muted_until: incomingHasState ? incoming.muted_until : existing.muted_until,
+    marked_unread:
+      existing.marked_unread || incoming.marked_unread
+        ? incoming.marked_unread ||
+          (existing.marked_unread &&
+            (lastSeen === existing.last_seen_id || incoming.last_seen_id == null))
+        : false,
+  };
+}
+
 export function mergeThreadInto(existing: Thread, incoming: Thread): Thread {
   const seen = new Map<string, ChatMessage>();
   for (const m of existing.messages) {
@@ -116,7 +190,7 @@ export function mergeThreadInto(existing: Thread, incoming: Thread): Thread {
     messages: merged,
     pinned_messages:
       incoming.pinned_messages.length > 0 ? incoming.pinned_messages : existing.pinned_messages,
-    unread: incoming.unread,
+    unread: mergeUnreadState(existing.unread, incoming.unread),
     presentation: {
       ...existing.presentation,
       ...incoming.presentation,

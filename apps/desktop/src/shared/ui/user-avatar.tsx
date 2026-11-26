@@ -44,8 +44,7 @@ export function UserAvatar({
         {isGroup ? <Users size={Math.round(size * 0.5)} /> : initialsOf(name || "Z")}
       </AvatarFallback>
       {isGroup && memberCount && memberCount > 0 && size >= 36 ? (
-        <AvatarBadge className="-right-1 -bottom-1 h-4 min-w-4 bg-card px-1 text-[10px] leading-none font-semibold text-muted-foreground ring-1 ring-border">
-          <Users className="size-2.5" />
+        <AvatarBadge className="-right-1 -bottom-1 h-4 min-w-4 bg-card px-1 text-[10px] leading-none font-semibold text-muted-foreground tabular-nums ring-1 ring-border">
           <span>{memberCount > 999 ? "999+" : memberCount}</span>
         </AvatarBadge>
       ) : null}

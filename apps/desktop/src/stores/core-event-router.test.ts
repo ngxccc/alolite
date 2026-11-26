@@ -153,21 +153,22 @@ describe("coreEventRouter + feature domain invariants", () => {
     useChatStore.getState().selectThread("u_200");
     expect(useChatStore.getState().selectedThreadId).toBe("u_200");
 
+    const updatedThread = makeThread("u_100", "Minh Anh", 2000, [
+      {
+        id: "m3",
+        sender: "Minh Anh",
+        text: "Ping",
+        time: "10:05",
+        is_outgoing: false,
+        ts: 2000,
+      },
+    ]);
+    updatedThread.unread.unread_ids = ["m3"];
+
     dispatchCoreEvent({
       type: "ThreadsUpdated",
       payload: {
-        threads: [
-          makeThread("u_100", "Minh Anh", 2000, [
-            {
-              id: "m3",
-              sender: "Minh Anh",
-              text: "Ping",
-              time: "10:05",
-              is_outgoing: false,
-              ts: 2000,
-            },
-          ]),
-        ],
+        threads: [updatedThread],
       },
     });
 
@@ -175,6 +176,70 @@ describe("coreEventRouter + feature domain invariants", () => {
     expect(chat.selectedThreadId).toBe("u_200");
     expect(chat.unreadCounts.u_100).toBe(1);
     expect(chat.threads[0]?.id).toBe("u_100");
+  });
+
+  it("does not fabricate unreadCounts from message array growth when UnreadState is empty (#74)", () => {
+    const settings = makeSettings();
+    const t1 = makeThread("u_100", "Minh Anh", 1000, [
+      {
+        id: "100",
+        sender: "Minh Anh",
+        text: "Old 1",
+        time: "10:00",
+        is_outgoing: false,
+        ts: 1000,
+      },
+    ]);
+    t1.unread.last_seen_id = "100";
+    const t2 = makeThread("u_200", "Binh", 500);
+    bootstrapStores({
+      app_version: "0.0.1",
+      dev_mode: false,
+      logged_in: true,
+      uin: "999",
+      display_name: "Me",
+      avatar: null,
+      threads: [t1, t2],
+      settings,
+      saved_accounts: [],
+      popular_stickers: [],
+      onion_stickers: [],
+      pinned_packs: [],
+      app_logo_data_url: "",
+      active_db_path: "test.db",
+      sync_running: false,
+      phone_sync_running: false,
+      inline_video_supported: true,
+      inline_video_reason: null,
+    });
+    useChatStore.getState().selectThread("u_200");
+
+    const hydratedUpdate = makeThread("u_100", "Minh Anh", 1500, [
+      {
+        id: "99",
+        sender: "Minh Anh",
+        text: "Older",
+        time: "09:59",
+        is_outgoing: false,
+        ts: 900,
+      },
+      {
+        id: "100",
+        sender: "Minh Anh",
+        text: "Old 1",
+        time: "10:00",
+        is_outgoing: false,
+        ts: 1000,
+      },
+    ]);
+    dispatchCoreEvent({
+      type: "ThreadsUpdated",
+      payload: { threads: [hydratedUpdate] },
+    });
+
+    const chat = useChatStore.getState();
+    expect(chat.unreadCounts.u_100).toBe(0);
+    expect(chat.threads.find((t) => t.id === "u_100")?.unread.last_seen_id).toBe("100");
   });
 
   it("reconciles MessageSent, Reacted, MessageRecalled, and MessageDeleted cleanly (INV-4)", () => {
