@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { toast as sonnerToast } from "sonner";
 import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import { ImageViewerModal } from "@/shared/ui/image-viewer-modal";
+import { Toaster } from "@/shared/ui/sonner";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 import { LoginView } from "@/features/auth/components/login-view";
 import { NavRail } from "@/features/navigation/components/nav-rail";
@@ -92,8 +94,14 @@ export function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => clearToast(), 2600);
-    return () => window.clearTimeout(t);
+    if (toast.kind === "error") {
+      sonnerToast.error(toast.message);
+    } else if (toast.kind === "success") {
+      sonnerToast.success(toast.message);
+    } else {
+      sonnerToast.info(toast.message);
+    }
+    clearToast();
   }, [toast, clearToast]);
 
   useEffect(() => {
@@ -160,12 +168,11 @@ export function App() {
         onClose={() => setImageViewerState(null)}
       />
 
-      {toast ? (
-        <div className="fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-lg border border-border bg-popover px-3.5 py-2 text-xs font-medium text-popover-foreground shadow-xl">
-          <span className="h-2 w-2 shrink-0 rounded-full bg-online" />
-          <span>{toast.message}</span>
-        </div>
-      ) : null}
+      <Toaster
+        theme={themeMode === "light" || themeMode === "dark" ? themeMode : "system"}
+        position="bottom-right"
+        closeButton
+      />
     </TooltipProvider>
   );
 }
