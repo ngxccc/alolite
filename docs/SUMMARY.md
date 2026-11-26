@@ -1,6 +1,5 @@
 # Summary
 
-- [Roadmap](ROADMAP.md)
 - [Legal & Compliance](LEGAL.md)
 
 # Architecture Decision Records (ADR)
@@ -12,6 +11,7 @@
 - [ADR 0005: Retain Tauri v2 over Qt6 and Native GUI Toolkits](adr/0005-retain-tauri-v2-over-qt6-and-native-gui-toolkits.md)
 - [ADR 0006: Frontend Domain Stores & Selector Discipline](adr/0006-frontend-domain-stores-and-selector-discipline.md)
 - [ADR 0007: shadcn/ui Base UI & Zinc Design System](adr/0007-shadcn-base-ui-and-zinc-design-system.md)
+- [ADR 0008: Pure-Rust ZRTC Audio Call Engine](adr/0008-pure-rust-zrtc-audio-call-engine.md)
 
 # Engineering Standards
 

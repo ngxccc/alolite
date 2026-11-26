@@ -201,7 +201,6 @@ Details: [`docs/adr/`](docs/adr/) and [`docs/standards/`](docs/standards/).
 | [`AGENTS.md`](AGENTS.md)             | Operating guide for humans and AI agents: commands, architecture map, non-negotiables   |
 | [`docs/standards/`](docs/standards/) | API, SQLite, concurrency, testing, security, commit and PR standards                    |
 | [`docs/adr/`](docs/adr/)             | Architecture decisions (Trusted Device, `protocol/` boundaries, Tauri, Cargo workspace) |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Scope and roadmap                                                                       |
 | [`GLOSSARY.md`](GLOSSARY.md)         | Domain glossary                                                                         |
 
 ---
