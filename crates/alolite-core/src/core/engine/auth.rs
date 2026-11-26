@@ -271,13 +271,7 @@ impl CoreEngine {
             self.emit(CoreEvent::MuteSnapshotSynced(mute_snap.mutes));
         }
 
-        let sync_snapshot = list.clone();
         self.emit(CoreEvent::ThreadsUpdated(list));
-
-        let engine_sync = Arc::clone(self);
-        tokio::spawn(async move {
-            engine_sync.sync_phone_messages(sync_snapshot, true).await;
-        });
 
         let engine_kw = Arc::clone(self);
         tokio::spawn(async move {

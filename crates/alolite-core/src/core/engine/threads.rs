@@ -497,6 +497,18 @@ impl CoreEngine {
 
     pub async fn sync_phone_messages(&self, mut threads: Vec<Thread>, send_phone_prompt: bool) {
         if PHONE_SYNC_RUNNING.swap(true, Ordering::SeqCst) {
+            if send_phone_prompt {
+                self.emit(CoreEvent::PhoneSyncFinished {
+                    threads: Vec::new(),
+                    added: 0,
+                    active_threads: 0,
+                    cancelled: false,
+                    error: Some(
+                        "Tiến trình đồng bộ từ điện thoại khác đang chạy, vui lòng đợi hoặc bấm 'Dừng đồng bộ'."
+                            .to_string(),
+                    ),
+                });
+            }
             return;
         }
         PHONE_SYNC_CANCEL.store(false, Ordering::Relaxed);
@@ -516,7 +528,7 @@ impl CoreEngine {
 
         let res = match fetch_res {
             Ok(outcome) if outcome.cancelled => Ok((0, 0)),
-            Ok(outcome) => {
+            Ok(_outcome) => {
                 let uin = s.login.as_ref().map(|l| l.uin.clone()).unwrap_or_default();
                 let db_path = db_path_for_account(&uin);
                 let snapshot = threads.clone();
@@ -525,9 +537,7 @@ impl CoreEngine {
                 })
                 .await;
                 match db_added {
-                    Ok(Ok(n)) => {
-                        let after_total: usize = threads.iter().map(|t| t.messages.len()).sum();
-                        let added = n.max(after_total.saturating_sub(outcome.before_total));
+                    Ok(Ok(added)) => {
                         let active_threads =
                             threads.iter().filter(|t| !t.messages.is_empty()).count();
                         let final_msg = format_phone_sync_final_message(added, active_threads);
