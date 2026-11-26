@@ -26,6 +26,7 @@ use alolite_core::protocol::messaging::unread::mute::MuteControlEvent;
 use alolite_core::protocol::messaging::unread::state::UnreadState;
 use alolite_core::protocol::social::friends::{FriendshipStatus, PhoneLookupResult};
 use alolite_core::services::account_manager::AccountProfile;
+use alolite_core::services::call_media::{AudioDeviceInfo, AudioDeviceKind, AudioDeviceList};
 use alolite_core::services::updater::UpdateCheckResult;
 
 use specta::datatype::{DataType, Fields, NamedReferenceType, Primitive, Reference};
@@ -163,6 +164,9 @@ pub fn generate_ipc_typescript() -> String {
         .register::<SidebarPresentation>()
         .register::<Thread>()
         .register::<ChatMessage>()
+        .register::<AudioDeviceKind>()
+        .register::<AudioDeviceInfo>()
+        .register::<AudioDeviceList>()
         .register::<alolite_core::mcp::AutoReplyRule>();
 
     let types = specta_serde::Format

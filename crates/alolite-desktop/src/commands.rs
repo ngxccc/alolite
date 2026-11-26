@@ -623,3 +623,24 @@ pub async fn set_call_held(state: State<'_, AppCoreState>, held: bool) -> Result
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn list_audio_devices(
+) -> Result<alolite_core::services::call_media::AudioDeviceList, String> {
+    tokio::task::spawn_blocking(alolite_core::services::call_media::list_audio_devices)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_call_devices(
+    state: State<'_, AppCoreState>,
+    mic_id: Option<String>,
+    speaker_id: Option<String>,
+) -> Result<(), String> {
+    state
+        .engine
+        .set_call_devices(mic_id, speaker_id)
+        .await
+        .map_err(|e| e.to_string())
+}

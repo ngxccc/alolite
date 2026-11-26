@@ -60,6 +60,33 @@ export type AppSettings = {
 	info_drawer_open: boolean,
 };
 
+/**  Enumerated audio input (microphone) or output (speaker) device. */
+export type AudioDeviceInfo = {
+	/**  Backend device identifier (`"default"` for system default). */
+	id: string,
+	/**  Human-readable device label for UI display. */
+	name: string,
+	/**  Whether this device is an input (mic) or output (speaker). */
+	kind: AudioDeviceKind,
+	/**  True if this is the system default device. */
+	is_default: boolean,
+};
+
+/**  Direction/kind of an audio device. */
+export type AudioDeviceKind = 
+/**  Microphone / audio capture source. */
+"input" | 
+/**  Speaker / audio playback sink. */
+"output";
+
+/**  Snapshot of available audio input and output devices. */
+export type AudioDeviceList = {
+	/**  Available microphone / capture devices. */
+	inputs: AudioDeviceInfo[],
+	/**  Available speaker / playback devices. */
+	outputs: AudioDeviceInfo[],
+};
+
 export type AutoReplyRule = {
 	id: string,
 	keyword: string,

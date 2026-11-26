@@ -18,9 +18,10 @@ use crate::clock::{now_ms, unix_now};
 use crate::core::events::{CallPhase, CoreEvent};
 use crate::protocol::call::p2p::{P2pController, P2pOutbound, P2pRxOutcome};
 use crate::protocol::call::signaling::{
-    answer_call, cancel_call, end_call as send_end_call_http, hold_request, log_end_call,
-    request_call, send_answer_ack, send_conf, send_request, send_ring_ring, unhold_request,
-    CallSignalCode, CallSignalWireData, ExtendData, RelayServerAddr, SrtpKeyMaterial,
+    answer_call, cancel_call, end_call as send_end_call_http, hold_request, hold_response,
+    log_end_call, request_call, send_answer_ack, send_conf, send_request, send_ring_ring,
+    unhold_request, unhold_response, CallSignalCode, CallSignalWireData, ExtendData,
+    RelayServerAddr, SrtpKeyMaterial,
 };
 use crate::protocol::call::srtp::SrtpContext;
 use crate::protocol::call::zrtp::{
@@ -32,8 +33,8 @@ use crate::protocol::call::{
 use crate::protocol::messaging::{CallOutcome, ChatMessage, MessageKind};
 use crate::protocol::session::Session;
 use crate::services::call_media::{
-    NetEq, NetEqConfig, NullAudioBackend, NullOpusDecoder, NullOpusEncoder, OpusDecoderBackend,
-    OpusEncoderBackend, FRAME_SAMPLES,
+    normalize_device_id, NetEq, NetEqConfig, NullAudioBackend, NullOpusDecoder, NullOpusEncoder,
+    OpusDecoderBackend, OpusEncoderBackend, FRAME_SAMPLES,
 };
 use crate::storage::{MessageStore, StoredMessage};
 
@@ -63,8 +64,15 @@ pub struct CallSnapshot {
 
 #[derive(Debug)]
 enum MediaLoopCmd {
-    Stop { send_end_call_pkt: bool },
+    Stop {
+        send_end_call_pkt: bool,
+    },
     SetMuted(bool),
+    SetHeld(bool),
+    SetDevices {
+        mic_id: Option<String>,
+        speaker_id: Option<String>,
+    },
 }
 
 #[derive(Default)]
@@ -79,6 +87,8 @@ struct CallManagerState {
     ring_timer_task: Option<tokio::task::JoinHandle<()>>,
     media_task: Option<tokio::task::JoinHandle<()>>,
     media_cmd_tx: Option<mpsc::UnboundedSender<MediaLoopCmd>>,
+    selected_mic_id: Option<String>,
+    selected_speaker_id: Option<String>,
     audio_device_opened_count: usize,
 }
 
@@ -136,6 +146,12 @@ impl CallManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .audio_device_opened_count
+    }
+
+    /// Return the currently selected `(mic_id, speaker_id)` preferences (`None` = system default).
+    pub fn selected_devices(&self) -> (Option<String>, Option<String>) {
+        let g = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        (g.selected_mic_id.clone(), g.selected_speaker_id.clone())
     }
 }
 
@@ -420,6 +436,36 @@ impl CoreEngine {
         Ok(())
     }
 
+    /// Select microphone and speaker devices for active and future calls (`None` / `"default"` = system default).
+    ///
+    /// # Errors
+    /// Returns `Ok(())` after storing the normalized device selection and notifying any active media loop.
+    pub async fn set_call_devices(
+        self: &Arc<Self>,
+        mic_id: Option<String>,
+        speaker_id: Option<String>,
+    ) -> Result<()> {
+        let norm_mic = normalize_device_id(mic_id.as_deref()).map(ToString::to_string);
+        let norm_spk = normalize_device_id(speaker_id.as_deref()).map(ToString::to_string);
+        let tx = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.selected_mic_id = norm_mic.clone();
+            g.selected_speaker_id = norm_spk.clone();
+            g.media_cmd_tx.clone()
+        };
+        if let Some(tx) = tx {
+            let _ = tx.send(MediaLoopCmd::SetDevices {
+                mic_id: norm_mic,
+                speaker_id: norm_spk,
+            });
+        }
+        Ok(())
+    }
+
     /// Dispatch a parsed VoIP signaling event (`401..409`) from WS `604` or `601..603`.
     pub async fn handle_voip_signal(
         self: &Arc<Self>,
@@ -552,6 +598,40 @@ impl CoreEngine {
                     .apply(CallEvent::PeerEnded { call_id })
                     .unwrap_or_default()
             }
+            CallSignalCode::HoldReq | CallSignalCode::UnholdReq => {
+                let ack = {
+                    let g = self
+                        .call_manager
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if g.session.call_id() == Some(call_id) {
+                        Some((
+                            g.session.peer_id().unwrap_or_default().to_string(),
+                            g.session.sess_id().unwrap_or_default().to_string(),
+                        ))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((peer_id, sess_id)) = ack {
+                    let s_clone = s_snap.clone();
+                    tokio::spawn(async move {
+                        let res = if code == CallSignalCode::HoldReq {
+                            hold_response(&s_clone, &peer_id, call_id, &sess_id, 0).await
+                        } else {
+                            unhold_response(&s_clone, &peer_id, call_id, &sess_id, 0).await
+                        };
+                        if let Err(e) = res {
+                            crate::logger::log_error(
+                                "call::signal",
+                                &format!("hold/unhold ack failed: {e}"),
+                            );
+                        }
+                    });
+                }
+                return;
+            }
             _ => return,
         };
 
@@ -677,7 +757,18 @@ impl CoreEngine {
                     }
                     self.emit_call_snapshot(None);
                 }
-                CallEffect::HoldChanged(_) => {
+                CallEffect::HoldChanged(held) => {
+                    let tx = {
+                        let g = self
+                            .call_manager
+                            .state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        g.media_cmd_tx.clone()
+                    };
+                    if let Some(tx) = tx {
+                        let _ = tx.send(MediaLoopCmd::SetHeld(held));
+                    }
                     self.emit_call_snapshot(None);
                 }
                 CallEffect::CallFinished { reason, .. } => {
@@ -903,7 +994,7 @@ impl CoreEngine {
             return;
         }
 
-        let (call_id, sess_id, peer_id, is_caller, relays, p2p_cands, srtp_key) = {
+        let (call_id, sess_id, peer_id, is_caller, relays, p2p_cands, srtp_key, init_mic, init_spk) = {
             let g = self
                 .call_manager
                 .state
@@ -917,6 +1008,8 @@ impl CoreEngine {
                 g.relay_servers.clone(),
                 g.p2p_candidates.clone(),
                 g.srtp_key.clone(),
+                g.selected_mic_id.clone(),
+                g.selected_speaker_id.clone(),
             )
         };
         let uid: u32 = s_snap
@@ -982,7 +1075,10 @@ impl CoreEngine {
 
             // EDGE-5: never open hardware audio devices in headless mode.
             let muted_flag = Arc::new(AtomicBool::new(false));
+            let held_flag = Arc::new(AtomicBool::new(false));
             let stop_audio_flag = Arc::new(AtomicBool::new(false));
+            let reopen_devices_flag = Arc::new(AtomicBool::new(false));
+            let pending_devices = Arc::new(StdMutex::new((init_mic, init_spk)));
             let (tx_pcm_up, mut rx_pcm_up) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
             let (tx_pcm_down, rx_pcm_down) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
 
@@ -1000,7 +1096,10 @@ impl CoreEngine {
                 }
                 spawn_audio_thread(
                     Arc::clone(&muted_flag),
+                    Arc::clone(&held_flag),
                     Arc::clone(&stop_audio_flag),
+                    Arc::clone(&reopen_devices_flag),
+                    Arc::clone(&pending_devices),
                     tx_pcm_up,
                     rx_pcm_down,
                 )
@@ -1060,6 +1159,18 @@ impl CoreEngine {
                             MediaLoopCmd::SetMuted(m) => {
                                 muted_flag.store(m, Ordering::Relaxed);
                             }
+                            MediaLoopCmd::SetHeld(h) => {
+                                held_flag.store(h, Ordering::Relaxed);
+                            }
+                            MediaLoopCmd::SetDevices { mic_id, speaker_id } => {
+                                {
+                                    let mut dev_g = pending_devices
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner());
+                                    *dev_g = (mic_id, speaker_id);
+                                }
+                                reopen_devices_flag.store(true, Ordering::Release);
+                            }
                             MediaLoopCmd::Stop { send_end_call_pkt } => {
                                 if send_end_call_pkt {
                                     if let Some(target) = relay_addr {
@@ -1074,6 +1185,7 @@ impl CoreEngine {
                     Some(pcm) = rx_pcm_up.recv() => {
                         if (relay_addr.is_some() || p2p.active_peer().is_some())
                             && !muted_flag.load(Ordering::Relaxed)
+                            && !held_flag.load(Ordering::Relaxed)
                         {
                             if let Ok(enc_len) = encoder.encode(&pcm, &mut opus_out_buf) {
                                 if enc_len > 0 {
@@ -1095,6 +1207,7 @@ impl CoreEngine {
                         match ZRTPPacket::decode(&recv_buf[..n]) {
                             Ok(ZRTPPacket::RelayMediaDown { msg_type, payload }) => {
                                 if msg_type == MSG_AUDIO_RTP_DOWN
+                                    && !held_flag.load(Ordering::Relaxed)
                                     && decode_and_queue_audio(
                                         &payload,
                                         srtp_rx.as_mut(),
@@ -1122,12 +1235,14 @@ impl CoreEngine {
                                 );
                                 dispatch_p2p_outbound(&socket, relay_addr, replies).await;
                                 if let P2pRxOutcome::AudioMedia(payload) = outcome {
-                                    decode_and_queue_audio(
-                                        &payload,
-                                        srtp_rx.as_mut(),
-                                        &mut neteq,
-                                        &tx_pcm_down,
-                                    );
+                                    if !held_flag.load(Ordering::Relaxed) {
+                                        decode_and_queue_audio(
+                                            &payload,
+                                            srtp_rx.as_mut(),
+                                            &mut neteq,
+                                            &tx_pcm_down,
+                                        );
+                                    }
                                 }
                             }
                             Ok(ZRTPPacket::Control {
@@ -1358,7 +1473,10 @@ impl OpusDecoderBackend for Box<dyn OpusDecoderBackend> {
 
 fn spawn_audio_thread(
     muted: Arc<AtomicBool>,
+    held: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    reopen_devices: Arc<AtomicBool>,
+    pending_devices: Arc<StdMutex<(Option<String>, Option<String>)>>,
     tx_up: mpsc::Sender<[i16; FRAME_SAMPLES]>,
     mut rx_down: mpsc::Receiver<[i16; FRAME_SAMPLES]>,
 ) -> Option<std::thread::JoinHandle<()>> {
@@ -1366,30 +1484,65 @@ fn spawn_audio_thread(
     {
         use crate::services::call_media::{AudioBackend, PulseAudioBackend};
         Some(std::thread::spawn(move || {
-            let mut backend: Box<dyn AudioBackend> = match PulseAudioBackend::open(None, None) {
-                Ok(b) => Box::new(b),
-                Err(e) => {
-                    crate::logger::log_error(
-                        "call::audio",
-                        &format!("PulseAudio open failed: {e}"),
-                    );
-                    Box::new(NullAudioBackend::new())
+            let open_backend = |mic: Option<&str>, spk: Option<&str>| -> Box<dyn AudioBackend> {
+                match PulseAudioBackend::open(normalize_device_id(spk), normalize_device_id(mic)) {
+                    Ok(b) => Box::new(b),
+                    Err(e) => {
+                        crate::logger::log_error(
+                            "call::audio",
+                            &format!("PulseAudio open failed: {e}"),
+                        );
+                        Box::new(NullAudioBackend::new())
+                    }
                 }
             };
+
+            let (init_mic, init_spk) = pending_devices
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let mut backend = open_backend(init_mic.as_deref(), init_spk.as_deref());
             let mut cap_buf = [0i16; FRAME_SAMPLES];
             let silence = [0i16; FRAME_SAMPLES];
             while !stop.load(Ordering::Relaxed) {
-                if !muted.load(Ordering::Relaxed) && backend.read_frame(&mut cap_buf).is_ok() {
+                if reopen_devices.swap(false, Ordering::AcqRel) {
+                    let (mic, spk) = pending_devices
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    // Drop current PulseAudio streams before opening replacement devices.
+                    drop(backend);
+                    backend = open_backend(mic.as_deref(), spk.as_deref());
+                }
+                let is_held = held.load(Ordering::Relaxed);
+                if !is_held
+                    && !muted.load(Ordering::Relaxed)
+                    && backend.read_frame(&mut cap_buf).is_ok()
+                {
                     let _ = tx_up.try_send(cap_buf);
                 }
-                let play_buf = rx_down.try_recv().unwrap_or(silence);
+                let play_buf = if is_held {
+                    let _ = rx_down.try_recv();
+                    silence
+                } else {
+                    rx_down.try_recv().unwrap_or(silence)
+                };
                 let _ = backend.write_frame(&play_buf);
             }
         }))
     }
     #[cfg(not(all(feature = "call", target_os = "linux")))]
     {
-        let _ = (muted, stop, tx_up, &mut rx_down, NullAudioBackend::new());
+        let _ = (
+            muted,
+            held,
+            stop,
+            reopen_devices,
+            pending_devices,
+            tx_up,
+            &mut rx_down,
+            NullAudioBackend::new(),
+        );
         None
     }
 }
@@ -1728,5 +1881,81 @@ mod tests {
             .any(|m| m.msg_id == "call_6002" && m.msg_type == "chat.call"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn set_call_muted_and_held_update_snapshot_and_emit_events() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_db_path(session, ":memory:", sink);
+
+        {
+            let mut g = engine.call_manager.state.lock().unwrap();
+            let _ = g
+                .session
+                .apply(CallEvent::IncomingInvite {
+                    call_id: 6001,
+                    sess_id: "s-6001".to_string(),
+                    peer_id: "peer-6".to_string(),
+                    srtp_mode: 1,
+                })
+                .unwrap();
+            let _ = g
+                .session
+                .apply(CallEvent::AcceptIncoming { call_id: 6001 })
+                .unwrap();
+            let _ = g
+                .session
+                .apply(CallEvent::MediaReady { call_id: 6001 })
+                .unwrap();
+        }
+
+        engine.set_call_muted(true).await.unwrap();
+        assert!(engine.call_snapshot().is_muted);
+
+        engine.set_call_held(true).await.unwrap();
+        assert!(engine.call_snapshot().is_held);
+
+        engine.set_call_held(false).await.unwrap();
+        assert!(!engine.call_snapshot().is_held);
+
+        let evs = events.lock().unwrap();
+        assert!(evs.iter().any(|ev| matches!(
+            ev,
+            CoreEvent::CallStateChanged {
+                phase: CallPhase::Active,
+                is_muted: true,
+                ..
+            }
+        )));
+        assert!(evs.iter().any(|ev| matches!(
+            ev,
+            CoreEvent::CallStateChanged {
+                phase: CallPhase::Active,
+                is_held: true,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn set_call_devices_stores_normalized_selection() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_db_path(session, ":memory:", sink);
+
+        engine
+            .set_call_devices(
+                Some("alsa_input.usb".to_string()),
+                Some("default".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let (mic, spk) = engine.call_manager.selected_devices();
+        assert_eq!(mic.as_deref(), Some("alsa_input.usb"));
+        assert_eq!(spk, None);
     }
 }

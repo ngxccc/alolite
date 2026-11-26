@@ -26,7 +26,10 @@ interface CallStoreState {
   isHeld: boolean;
   startedAtMs: number | null;
   endReason: string | null;
+  selectedMicId: string | null;
+  selectedSpeakerId: string | null;
   applyCallState: (snap: CallStateSnapshot) => void;
+  setSelectedDevices: (micId: string | null, speakerId: string | null) => void;
   resetCall: () => void;
 }
 
@@ -42,6 +45,8 @@ export const useCallStore = create<CallStoreState>()(
     isHeld: false,
     startedAtMs: null,
     endReason: null,
+    selectedMicId: null,
+    selectedSpeakerId: null,
 
     applyCallState: (snap) =>
       set((state) => {
@@ -55,6 +60,12 @@ export const useCallStore = create<CallStoreState>()(
         state.isHeld = snap.is_held;
         state.startedAtMs = snap.started_at_ms;
         state.endReason = snap.end_reason;
+      }),
+
+    setSelectedDevices: (micId, speakerId) =>
+      set((state) => {
+        state.selectedMicId = micId;
+        state.selectedSpeakerId = speakerId;
       }),
 
     resetCall: () =>
