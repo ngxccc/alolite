@@ -5,10 +5,11 @@ import { ipc, isTauriRuntime } from "@/shared/api/ipc";
 import type { AudioDeviceList } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
 import { Label } from "@/shared/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switch } from "@/shared/ui/switch";
 import { useCallStore, useUIStore } from "@/stores";
-import { SectionHeading, SelectRow, SettingCard, SwitchRow } from "../primitives";
+import { SectionHeading, SettingCard, SwitchRow } from "../primitives";
 import type { SettingsTabProps } from "../types";
 
 export function CallTab({ settings, updateSettings }: SettingsTabProps) {
@@ -127,19 +128,45 @@ export function CallTab({ settings, updateSettings }: SettingsTabProps) {
     <>
       <SectionHeading>Thiết bị âm thanh cuộc gọi</SectionHeading>
       <SettingCard>
-        <SelectRow
-          label="Micro đầu vào"
-          value={settings.selected_mic_device}
-          onChange={handleMicSelect}
-          options={micOptions}
-        />
+        <div className="space-y-1.5 px-4 py-3">
+          <div className="text-sm text-foreground">Micro đầu vào</div>
+          <Select
+            value={settings.selected_mic_device}
+            items={micOptions}
+            onValueChange={(v) => handleMicSelect(v ?? "")}
+          >
+            <SelectTrigger className="h-9 w-full border-border bg-canvas text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {micOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="border-t border-border" />
-        <SelectRow
-          label="Loa / tai nghe"
-          value={settings.selected_speaker_device}
-          onChange={handleSpeakerSelect}
-          options={spkOptions}
-        />
+        <div className="space-y-1.5 px-4 py-3">
+          <div className="text-sm text-foreground">Loa / tai nghe</div>
+          <Select
+            value={settings.selected_speaker_device}
+            items={spkOptions}
+            onValueChange={(v) => handleSpeakerSelect(v ?? "")}
+          >
+            <SelectTrigger className="h-9 w-full border-border bg-canvas text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {spkOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="border-t border-border" />
         <div className="flex flex-col gap-2.5 px-4 py-3">
           <div className="flex items-center justify-between gap-2">
