@@ -135,12 +135,14 @@ stateDiagram-v2
 
 ### Fail-Safe Boundaries & Timeouts
 
-| Boundary                               | Timeout   | Action on Expiry                                                                                                                                               |
-| :------------------------------------- | :-------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Ring Timeout** (Outgoing / Incoming) | `60 s`    | Send `cancel` (`11305`) or mark missed, persist `MessageKind::Call`, transition to `Idle`.                                                                     |
-| **ZRTP Echo Probe**                    | `2000 ms` | Select best responsive relay from `401` server list and proceed to `InitZRTP`.                                                                                 |
-| **`CHANGE_ADDRESS` (`cmd=14`) Retry**  | `3000 ms` | Retry `CHANGE_ADDRESS` up to bounded attempts; if relay remains unreachable, rely on `15 s` watchdog.                                                          |
-| **Active Media Watchdog**              | `15 s`    | If zero UDP packets (RTP/RTCP/PING) arrive for `15 s`, send `END_CALL (0x03)` + `11306 endcall`, stop audio thread, release mic/speaker, transition to `Idle`. |
+| Boundary                               | Timeout   | Action on Expiry                                                                                                                                                |
+| :------------------------------------- | :-------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Ring Timeout** (Outgoing / Incoming) | `60 s`    | Send `cancel` (`11305`) or mark missed, persist `MessageKind::Call`, transition to `Idle`.                                                                      |
+| **ZRTP Echo Probe**                    | `2000 ms` | Select best responsive relay from `401` server list and proceed to `InitZRTP`.                                                                                  |
+| **`CHANGE_ADDRESS` (`cmd=14`) Retry**  | `3000 ms` | Retry `CHANGE_ADDRESS` up to bounded attempts; if relay remains unreachable, rely on `15 s` watchdog.                                                           |
+| **Active Media Watchdog**              | `15 s`    | If zero UDP packets (RTP/RTCP/PING) arrive for `15 s`, send `END_CALL (0x03)` + `11306 endcall`, stop audio thread, release mic/speaker, transition to `Idle`.  |
+| **Multi-device `answer` (`402`)**      | Immediate | If `402` arrives while `IncomingRinging`, transition silently to `Idle` (`HandledElsewhere`, `signals: false`, no `LogEndCall` or local `CallHistoryRecorded`). |
+| **Ended `callId` Cache**               | `90 s`    | Bounded `64`-entry cache of ended `call_id`s suppresses late/replayed `401` invites from triggering ghost ringing.                                              |
 
 ---
 
