@@ -77,6 +77,9 @@ enum MediaLoopCmd {
     },
 }
 
+const ENDED_CALL_TTL: Duration = Duration::from_secs(90);
+const MAX_ENDED_CALLS: usize = 64;
+
 #[derive(Default)]
 struct CallManagerState {
     session: CallSession,
@@ -98,6 +101,40 @@ struct CallManagerState {
     selected_mic_id: Option<String>,
     selected_speaker_id: Option<String>,
     audio_device_opened_count: usize,
+    ended_call_ids: std::collections::VecDeque<(u32, Instant)>,
+}
+
+impl CallManagerState {
+    fn prune_ended_calls(&mut self, now: Instant) {
+        while let Some((_, ts)) = self.ended_call_ids.front() {
+            if now.duration_since(*ts) > ENDED_CALL_TTL {
+                self.ended_call_ids.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn remember_ended_call(&mut self, call_id: u32) {
+        if call_id == 0 {
+            return;
+        }
+        let now = Instant::now();
+        self.prune_ended_calls(now);
+        self.ended_call_ids.retain(|(id, _)| *id != call_id);
+        self.ended_call_ids.push_back((call_id, now));
+        while self.ended_call_ids.len() > MAX_ENDED_CALLS {
+            self.ended_call_ids.pop_front();
+        }
+    }
+
+    fn is_ended_call(&mut self, call_id: u32) -> bool {
+        if call_id == 0 {
+            return false;
+        }
+        self.prune_ended_calls(Instant::now());
+        self.ended_call_ids.iter().any(|(id, _)| *id == call_id)
+    }
 }
 
 /// Coordinates the single active 1-1 ZRTC [`CallSession`] outside `CoreEngine::session` (`INV-9`).
@@ -215,6 +252,7 @@ fn end_reason_label(reason: CallEndReason) -> String {
         CallEndReason::RingTimeout => "ring_timeout",
         CallEndReason::MediaTimeout => "media_timeout",
         CallEndReason::PeerEnded => "peer_ended",
+        CallEndReason::HandledElsewhere => "handled_elsewhere",
         CallEndReason::NetworkError => "network_error",
     }
     .to_string()
@@ -246,6 +284,7 @@ fn resolve_call_outcome(
         CallEndReason::RingTimeout => CallOutcome::Missed,
         CallEndReason::Normal
         | CallEndReason::PeerEnded
+        | CallEndReason::HandledElsewhere
         | CallEndReason::MediaTimeout
         | CallEndReason::NetworkError => {
             if is_outgoing {
@@ -633,6 +672,12 @@ impl CoreEngine {
                     .state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
+                if g.is_ended_call(call_id) {
+                    crate::logger::call_debug(&format!(
+                        "[DEBUG-call] ignored late 401 for ended call_id={call_id}"
+                    ));
+                    return;
+                }
                 let was_idle = g.session.state() == CallState::Idle;
                 let res = g.session.apply(CallEvent::IncomingInvite {
                     call_id,
@@ -690,6 +735,9 @@ impl CoreEngine {
                         g.srtp_key = srtp_key;
                     }
                 }
+                if !accepted || g.session.state() == CallState::IncomingRinging {
+                    g.remember_ended_call(call_id);
+                }
                 g.session
                     .apply(CallEvent::PeerAnswered { call_id, accepted })
                     .unwrap_or_default()
@@ -700,6 +748,7 @@ impl CoreEngine {
                     .state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
+                g.remember_ended_call(call_id);
                 g.session
                     .apply(CallEvent::PeerCancelled { call_id })
                     .unwrap_or_default()
@@ -710,6 +759,7 @@ impl CoreEngine {
                     .state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
+                g.remember_ended_call(call_id);
                 g.session
                     .apply(CallEvent::PeerEnded { call_id })
                     .unwrap_or_default()
@@ -797,10 +847,10 @@ impl CoreEngine {
     }
 
     async fn execute_call_effects(self: &Arc<Self>, s_snap: &Session, effects: Vec<CallEffect>) {
-        eprintln!(
+        crate::logger::call_debug(&format!(
             "[DEBUG-call] execute_effects count={} effects={effects:?}",
             effects.len()
-        );
+        ));
         let mut needs_teardown_complete = false;
         let mut finished_reason: Option<CallEndReason> = None;
 
@@ -937,6 +987,7 @@ impl CoreEngine {
                     .session
                     .apply(CallEvent::TeardownComplete)
                     .unwrap_or_default();
+                g.remember_ended_call(cid);
                 g.peer_name = None;
                 g.peer_avatar = None;
                 g.local_media_uid = None;
@@ -970,7 +1021,10 @@ impl CoreEngine {
                         end_reason_for_idle = Some(reason);
                     }
                     CallEffect::StateChanged(CallState::Idle) => {
-                        if call_id != 0 && !peer_id.is_empty() {
+                        if call_id != 0
+                            && !peer_id.is_empty()
+                            && end_reason_for_idle != Some(CallEndReason::HandledElsewhere)
+                        {
                             let reason = end_reason_for_idle.unwrap_or(CallEndReason::Normal);
                             let msg = build_call_history_message(
                                 call_id,
@@ -3355,5 +3409,54 @@ mod tests {
             assert!(g.selected_relay.is_some());
         }
         engine.end_call().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn incoming_401_then_402_answer_closes_silently_and_suppresses_late_401_replay() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+            Duration::from_millis(500),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 8001, "peer-multi-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::IncomingRinging);
+
+        // Phone answered the incoming call -> 402 arrives on desktop.
+        engine
+            .handle_voip_signal(&s_snap, test_signal(402, 8001, "peer-multi-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+
+        // Multi-device handling must not fabricate a local CallHistoryRecorded entry.
+        {
+            let ev_guard = events.lock().unwrap();
+            assert!(!ev_guard
+                .iter()
+                .any(|e| matches!(e, CoreEvent::CallHistoryRecorded { .. })));
+            assert!(ev_guard.iter().any(|e| matches!(
+                e,
+                CoreEvent::CallStateChanged {
+                    phase: CallPhase::Idle,
+                    end_reason: Some(reason),
+                    ..
+                } if reason == "handled_elsewhere"
+            )));
+        }
+
+        // Late/replayed 401 for the same call_id must not cause ghost ringing.
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 8001, "peer-multi-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
     }
 }

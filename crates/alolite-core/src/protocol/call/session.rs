@@ -35,6 +35,7 @@ pub enum CallEndReason {
     RingTimeout,
     MediaTimeout,
     PeerEnded,
+    HandledElsewhere,
     NetworkError,
 }
 
@@ -262,7 +263,15 @@ impl CallSession {
             }
 
             CallEvent::PeerAnswered { call_id, accepted } => {
-                if self.call_id != Some(call_id) || self.state != CallState::OutgoingRinging {
+                if self.call_id != Some(call_id) {
+                    return Ok(Vec::new());
+                }
+                if self.state == CallState::IncomingRinging {
+                    // Multi-device: another device answered or declined; clear local UI/ringing
+                    // silently without sending Cancel/Reject/EndCall/LogEndCall (`signals: false`).
+                    return self.begin_ending(CallEndReason::HandledElsewhere, false, None);
+                }
+                if self.state != CallState::OutgoingRinging {
                     return Ok(Vec::new());
                 }
                 if accepted {
@@ -431,11 +440,13 @@ impl CallSession {
                 let call_id = self.call_id.unwrap_or(0);
                 let reason = self.end_reason.unwrap_or(CallEndReason::Normal);
                 self.reset_to_idle();
-                Ok(vec![
-                    CallEffect::SendSignal(CallSignalCode::LogEndCall),
-                    CallEffect::CallFinished { call_id, reason },
-                    CallEffect::StateChanged(CallState::Idle),
-                ])
+                let mut effects = Vec::with_capacity(3);
+                if reason != CallEndReason::HandledElsewhere {
+                    effects.push(CallEffect::SendSignal(CallSignalCode::LogEndCall));
+                }
+                effects.push(CallEffect::CallFinished { call_id, reason });
+                effects.push(CallEffect::StateChanged(CallState::Idle));
+                Ok(effects)
             }
         }
     }
@@ -584,5 +595,48 @@ mod tests {
         let second_end = s.apply(CallEvent::PeerEnded { call_id: 200 }).unwrap();
         assert!(second_end.is_empty());
         assert_eq!(s.state(), CallState::Ending);
+    }
+
+    #[test]
+    fn incoming_call_answered_on_another_device_ends_silently_without_signals() {
+        let mut s = CallSession::new();
+        s.apply(CallEvent::IncomingInvite {
+            call_id: 300,
+            sess_id: "sess-300".to_string(),
+            peer_id: "user-1".to_string(),
+            srtp_mode: 1,
+        })
+        .unwrap();
+        assert_eq!(s.state(), CallState::IncomingRinging);
+
+        let end_effs = s
+            .apply(CallEvent::PeerAnswered {
+                call_id: 300,
+                accepted: true,
+            })
+            .unwrap();
+        assert_eq!(
+            end_effs,
+            vec![
+                CallEffect::StateChanged(CallState::Ending),
+                CallEffect::StopZrtpAndMedia {
+                    send_end_call_pkt: false
+                },
+            ]
+        );
+        assert_eq!(s.state(), CallState::Ending);
+
+        let idle_effs = s.apply(CallEvent::TeardownComplete).unwrap();
+        assert_eq!(
+            idle_effs,
+            vec![
+                CallEffect::CallFinished {
+                    call_id: 300,
+                    reason: CallEndReason::HandledElsewhere,
+                },
+                CallEffect::StateChanged(CallState::Idle),
+            ]
+        );
+        assert_eq!(s.state(), CallState::Idle);
     }
 }
