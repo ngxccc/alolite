@@ -66,6 +66,15 @@ Ubiquitous language for `alolite`. Use these terms verbatim in issues, ADRs, tes
 | **PinnedBar**      | Single-line pinned message banner (`features/chat/components/pinned-bar.tsx`) below `ChatHeader`.                                                             | "pin header", "announcement bar" |
 | **Composer**       | Bottom message input bar (`features/chat/components/composer.tsx`) with reply preview, link preview, sticker picker, and attachment upload.                   | "input box", "message bar"       |
 
+## Voice & Call Domain
+
+| Term                 | Definition                                                                                                                                            | Avoid                         |
+| :------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------- |
+| **ZRTC**             | Zalo's custom UDP call transport: `0x01`/`0x02` ZRTP control frames, `0x03..0x0f` relay media datagrams, and `0x7f` direct P2P extension packets.     | "WebRTC", "standard SIP/RTP"  |
+| **CallSession**      | Single active 1-1 audio call lifecycle (`Idle`, `OutgoingRinging`, `IncomingRinging`, `Connecting`, `Active`, `Ending`) coordinated by `CallManager`. | "call object", "voice thread" |
+| **NetEq Buffer**     | Adaptive jitter buffer decoding 20/40/60 ms Opus packets into a 1920-sample scratch buffer and draining 20 ms (`320`-sample) ticks via `carry_pcm`.   | "ring buffer", "audio queue"  |
+| **Network Handover** | P2P-to-Relay failover sequence (`0x7f kind=5 subCmd=2` + `REQ_FORWARD subCmd=2` + `CHANGE_ADDRESS cmd=14`) triggered on local IPv4 route change.      | "reconnect", "ICE restart"    |
+
 ## Invariants
 
 Domain invariants are tagged `INV-N` here and referenced verbatim from code and tests.
@@ -76,3 +85,6 @@ Domain invariants are tagged `INV-N` here and referenced verbatim from code and 
 - **INV-4** — A message row is idempotent by `msg_id`; re-delivery never duplicates history.
 - **INV-5** — `crates/alolite-core/src/protocol/` remains pure protocol, crypto, and wire parsing; SQLite (`rusqlite`) and `threads_cache.json` persistence live strictly under `crates/alolite-core/src/storage/`.
 - **INV-6** — A thread's `last_seen_id` is monotonic (never regresses to an older numeric message ID), and `PollState` advances atomically in the same SQLite transaction as the ingested messages.
+- **INV-7** — At most one `CallSession` is active at any time (Single-Call Invariant); duplicate `callId` invites are deduplicated and concurrent incoming calls while non-`Idle` are rejected.
+- **INV-8** — Call media uses SRTP (`srtpMode: 1`, `AES-128-CM + HMAC-SHA1-80`) by default, and raw SRTP keys, unredacted peer IPs, or PCM audio are never written to logs.
+- **INV-9** — UDP media sockets and audio I/O threads never hold the `CoreEngine::session` mutex; signaling borrows `Session` only for transient HTTP requests.
