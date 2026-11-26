@@ -23,7 +23,7 @@ help:
 
 dev-desktop:
 	cd apps/desktop && bun run build
-	cargo run -p alolite-desktop --bin alolite-desktop -- --dev
+	cargo run -p alolite-desktop --bin alolite-desktop
 
 mcp:
 	cargo run -p alolite-cli --bin alolite -- --mcp
