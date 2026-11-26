@@ -1,12 +1,16 @@
-use crate::protocol::wire::{opt_string, opt_u64, strip_group_prefix, WireData};
-use anyhow::Result;
-use rusqlite::params;
-use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
 
-use super::models::{MessageStore, StoredMessage, StoredThread};
+use crate::protocol::messaging::polling::PollState;
 use crate::protocol::messaging::threads::{
     deduplicate_threads, is_generic_thread_name, ChatMessage, Thread,
 };
+use crate::protocol::messaging::unread::{compare_ids, UnreadState};
+use crate::protocol::wire::{opt_string, opt_u64, strip_group_prefix, WireData};
+use anyhow::Result;
+use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
+
+use super::models::{MessageStore, StoredMessage, StoredThread};
 
 /// `messages.raw_json` as written by the store when a message is persisted.
 ///
@@ -227,6 +231,149 @@ impl MessageStore {
         Ok(out)
     }
 
+    /// Load persisted [`UnreadState`] for all threads in SQLite keyed by `thread_id`.
+    ///
+    /// # Errors
+    /// Returns an error if the SQLite query fails.
+    pub fn load_thread_unreads(&self) -> Result<HashMap<String, UnreadState>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT thread_id, last_seen_id, unread_ids_json, mention_ids_json, is_marked_unread, is_muted, muted_until
+             FROM threads",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let thread_id: String = row.get(0)?;
+            let last_seen_id: Option<String> = row.get(1)?;
+            let unread_json: String = row.get(2).unwrap_or_else(|_| "[]".into());
+            let mention_json: String = row.get(3).unwrap_or_else(|_| "[]".into());
+            let marked_unread: i64 = row.get(4).unwrap_or(0);
+            let muted: i64 = row.get(5).unwrap_or(0);
+            let muted_until: Option<i64> = row.get(6)?;
+            let unread_ids: BTreeSet<String> =
+                serde_json::from_str(&unread_json).unwrap_or_default();
+            let mention_ids: BTreeSet<String> =
+                serde_json::from_str(&mention_json).unwrap_or_default();
+            Ok((
+                thread_id,
+                UnreadState {
+                    last_seen_id,
+                    unread_ids,
+                    mention_ids,
+                    muted: muted != 0,
+                    muted_until,
+                    marked_unread: marked_unread != 0,
+                    fresh: false,
+                    settings_fresh: false,
+                },
+            ))
+        })?;
+        let mut map = HashMap::new();
+        for r in rows {
+            let (tid, state) = r?;
+            map.insert(tid, state);
+        }
+        Ok(map)
+    }
+
+    /// Optimistically advance `last_seen_id` and clear `is_marked_unread` for `thread_id` in SQLite.
+    ///
+    /// # Errors
+    /// Returns an error if the SQLite transaction or query fails.
+    ///
+    /// # Invariants
+    /// - INV-6: `last_seen_id` is monotonic and never regresses to an older numeric message ID.
+    pub fn mark_thread_seen(&mut self, thread_id: &str, last_msg_id: &str) -> Result<()> {
+        if thread_id.is_empty() {
+            return Ok(());
+        }
+        let existing = self.load_thread_unread_single(thread_id)?;
+        let mut state = existing.unwrap_or_default();
+        if !last_msg_id.is_empty() {
+            state.advance_seen(last_msg_id);
+        }
+        state.unread_ids.clear();
+        state.mention_ids.clear();
+        state.marked_unread = false;
+        self.write_thread_unread(thread_id, &state)
+    }
+
+    /// Persist a manual unread mark (`is_marked_unread`) for `thread_id` in SQLite.
+    ///
+    /// # Errors
+    /// Returns an error if the SQLite update fails.
+    pub fn set_thread_marked_unread(&mut self, thread_id: &str, marked_unread: bool) -> Result<()> {
+        if thread_id.is_empty() {
+            return Ok(());
+        }
+        let mut state = self
+            .load_thread_unread_single(thread_id)?
+            .unwrap_or_default();
+        state.marked_unread = marked_unread;
+        self.write_thread_unread(thread_id, &state)
+    }
+
+    fn load_thread_unread_single(&self, thread_id: &str) -> Result<Option<UnreadState>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT last_seen_id, unread_ids_json, mention_ids_json, is_marked_unread, is_muted, muted_until
+             FROM threads WHERE thread_id = ?1",
+        )?;
+        stmt.query_row(params![thread_id], |row| {
+            let last_seen_id: Option<String> = row.get(0)?;
+            let unread_json: String = row.get(1).unwrap_or_else(|_| "[]".into());
+            let mention_json: String = row.get(2).unwrap_or_else(|_| "[]".into());
+            let marked_unread: i64 = row.get(3).unwrap_or(0);
+            let muted: i64 = row.get(4).unwrap_or(0);
+            let muted_until: Option<i64> = row.get(5)?;
+            Ok(UnreadState {
+                last_seen_id,
+                unread_ids: serde_json::from_str(&unread_json).unwrap_or_default(),
+                mention_ids: serde_json::from_str(&mention_json).unwrap_or_default(),
+                muted: muted != 0,
+                muted_until,
+                marked_unread: marked_unread != 0,
+                fresh: false,
+                settings_fresh: false,
+            })
+        })
+        .optional()
+        .map_err(Into::into)
+    }
+
+    fn write_thread_unread(&self, thread_id: &str, state: &UnreadState) -> Result<()> {
+        write_thread_unread_on_conn(&self.conn, thread_id, state)
+    }
+
+    /// Load persisted [`PollState`] from `sync_state`, returning `None` if absent.
+    ///
+    /// # Errors
+    /// Returns an error if the SQLite query fails.
+    pub fn load_poll_state(&self) -> Result<Option<PollState>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM sync_state WHERE key = 'poll_state'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(
+            raw.and_then(|s| match serde_json::from_str::<PollState>(&s) {
+                Ok(ps) => Some(ps),
+                Err(e) => {
+                    crate::logger::log_error("storage::load_poll_state", &e.to_string());
+                    None
+                }
+            }),
+        )
+    }
+
+    /// Persist [`PollState`] into `sync_state`.
+    ///
+    /// # Errors
+    /// Returns an error if serialization or SQLite write fails.
+    pub fn save_poll_state(&self, state: &PollState) -> Result<()> {
+        save_poll_state_on_conn(&self.conn, state)
+    }
+
     /// Hydrate `threads` with persisted threads and message history from SQLite.
     /// Returns the total number of messages loaded into `threads`.
     pub fn hydrate_threads(
@@ -236,11 +383,13 @@ impl MessageStore {
     ) -> Result<usize> {
         deduplicate_threads(threads, None);
 
+        let unreads = self.load_thread_unreads().unwrap_or_default();
         let stored_threads = self.all_threads().unwrap_or_default();
         for st in stored_threads {
             if st.thread_id.is_empty() || st.thread_id == "0" {
                 continue;
             }
+            let stored_unread = unreads.get(&st.thread_id).cloned().unwrap_or_default();
             if let Some(existing) = threads.iter_mut().find(|t| {
                 t.id == st.thread_id
                     || (st.is_group
@@ -254,6 +403,8 @@ impl MessageStore {
                     existing.name = st.name;
                 }
                 existing.is_group = existing.is_group || st.is_group;
+                merge_unread_monotonic(&mut existing.unread, &stored_unread);
+                existing.presentation.muted = existing.unread.is_muted();
             } else if !st.is_group
                 && st.name.contains("Cloud của tôi")
                 && threads
@@ -277,9 +428,10 @@ impl MessageStore {
                     );
                 }
             } else {
-                threads.push(Thread {
+                let muted = stored_unread.is_muted();
+                let mut t = Thread {
                     presentation: Default::default(),
-                    unread: Default::default(),
+                    unread: stored_unread,
                     id: st.thread_id.clone(),
                     name: if st.name.is_empty() {
                         format!("Người dùng {}", st.thread_id)
@@ -292,7 +444,9 @@ impl MessageStore {
                     is_group: st.is_group,
                     messages: Vec::new(),
                     pinned_messages: Vec::new(),
-                });
+                };
+                t.presentation.muted = muted;
+                threads.push(t);
             }
         }
 
@@ -480,11 +634,99 @@ impl MessageStore {
     }
 }
 
+fn write_thread_unread_on_conn(
+    conn: &rusqlite::Connection,
+    thread_id: &str,
+    state: &UnreadState,
+) -> Result<()> {
+    let unread_json = serde_json::to_string(&state.unread_ids)?;
+    let mention_json = serde_json::to_string(&state.mention_ids)?;
+    conn.execute(
+        "UPDATE threads
+         SET last_seen_id = ?2,
+             unread_ids_json = ?3,
+             mention_ids_json = ?4,
+             is_marked_unread = ?5,
+             is_muted = ?6,
+             muted_until = ?7
+         WHERE thread_id = ?1",
+        params![
+            thread_id,
+            state.last_seen_id,
+            unread_json,
+            mention_json,
+            if state.marked_unread { 1 } else { 0 },
+            if state.muted { 1 } else { 0 },
+            state.muted_until,
+        ],
+    )?;
+    Ok(())
+}
+
+fn save_poll_state_on_conn(conn: &rusqlite::Connection, state: &PollState) -> Result<()> {
+    let json = serde_json::to_string(state)?;
+    conn.execute(
+        "INSERT INTO sync_state (key, value) VALUES ('poll_state', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![json],
+    )?;
+    Ok(())
+}
+
+/// Merge `incoming` unread state into `target` monotonically without regressing `last_seen_id`.
+pub(crate) fn merge_unread_monotonic(target: &mut UnreadState, incoming: &UnreadState) {
+    if let Some(point) = &incoming.last_seen_id {
+        target.advance_seen(point);
+    }
+    for id in &incoming.unread_ids {
+        let newer = target
+            .last_seen_id
+            .as_deref()
+            .is_none_or(|point| compare_ids(id, point).is_some_and(|o| o.is_gt()));
+        if newer {
+            target.unread_ids.insert(id.clone());
+        }
+    }
+    for id in &incoming.mention_ids {
+        if target.unread_ids.contains(id) {
+            target.mention_ids.insert(id.clone());
+        }
+    }
+    if incoming.settings_fresh || (target.last_seen_id.is_none() && incoming.last_seen_id.is_some())
+    {
+        target.muted = incoming.muted;
+        target.muted_until = incoming.muted_until;
+        target.marked_unread = incoming.marked_unread;
+    } else if incoming.marked_unread {
+        target.marked_unread = true;
+    }
+}
+
 /// Persist threads and their messages to SQLite store, returning the count of newly inserted messages.
 pub fn persist_threads(store: &mut MessageStore, threads: &[Thread]) -> Result<usize> {
+    persist_threads_with_poll_state(store, threads, None)
+}
+
+/// Persist threads, messages, [`UnreadState`], and optional [`PollState`] in one SQLite transaction.
+///
+/// # Errors
+/// Returns an error if the transaction, thread/message upsert, or `PollState` write fails.
+///
+/// # Invariants
+/// - INV-6: `last_seen_id` is monotonic and `PollState` commits atomically with ingested messages.
+pub fn persist_threads_with_poll_state(
+    store: &mut MessageStore,
+    threads: &[Thread],
+    poll_state: Option<&PollState>,
+) -> Result<usize> {
     // One transaction for the whole snapshot: in autocommit every row was its own fsync.
     store.conn.execute_batch("BEGIN")?;
-    let res = persist_threads_inner(store, threads);
+    let res = persist_threads_inner(store, threads).and_then(|count| {
+        if let Some(ps) = poll_state {
+            save_poll_state_on_conn(&store.conn, ps)?;
+        }
+        Ok(count)
+    });
     store
         .conn
         .execute_batch(if res.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
@@ -493,6 +735,7 @@ pub fn persist_threads(store: &mut MessageStore, threads: &[Thread]) -> Result<u
 
 fn persist_threads_inner(store: &mut MessageStore, threads: &[Thread]) -> Result<usize> {
     let mut new_count = 0;
+    let existing_unreads = store.load_thread_unreads().unwrap_or_default();
     for t in threads {
         let last_ts = t
             .messages
@@ -508,6 +751,20 @@ fn persist_threads_inner(store: &mut MessageStore, threads: &[Thread]) -> Result
             last_ts,
         };
         store.upsert_thread(&st)?;
+
+        // Preserve existing SQLite UnreadState when a caller (e.g. archive ingest) passes Default::default().
+        let is_bare_default = t.unread.last_seen_id.is_none()
+            && t.unread.unread_ids.is_empty()
+            && t.unread.mention_ids.is_empty()
+            && !t.unread.marked_unread
+            && !t.unread.muted
+            && !t.unread.fresh
+            && !t.unread.settings_fresh;
+        if !is_bare_default {
+            let mut merged = existing_unreads.get(&t.id).cloned().unwrap_or_default();
+            merge_unread_monotonic(&mut merged, &t.unread);
+            write_thread_unread_on_conn(&store.conn, &t.id, &merged)?;
+        }
 
         for m in t.messages.iter().filter(|m| m.text != "sendBubbleMessage") {
             let mut sm = StoredMessage::from(m);
@@ -530,6 +787,14 @@ pub fn load_history_into_threads(path: &str, threads: &mut Vec<Thread>, limit_pe
     }
 }
 
+/// Load persisted [`PollState`] for account `uin`, returning `None` if not yet saved.
+pub fn load_poll_state_for_account(uin: &str) -> Option<PollState> {
+    let db_path = super::models::db_path_for_account(uin);
+    MessageStore::open(&db_path)
+        .ok()
+        .and_then(|store| store.load_poll_state().ok().flatten())
+}
+
 /// Hydrate `threads` from the SQLite history of account `uin` (`PRELOAD_MSGS` messages per thread).
 ///
 /// Owns the account-to-database-path mapping so `protocol/` never needs to know about the store.
@@ -543,9 +808,18 @@ pub fn preload_account_history(uin: &str, threads: &mut Vec<Thread>) {
 /// Persistence is best-effort: an unopenable store or a failed transaction is skipped silently and
 /// the cache file is still written, matching the former in-protocol behaviour of `poll_new_messages`.
 pub fn persist_account_threads(uin: &str, threads: &[Thread]) {
+    persist_account_threads_with_poll_state(uin, threads, None);
+}
+
+/// Persist `threads` and optional [`PollState`] atomically into SQLite for `uin`, then refresh cache.
+pub fn persist_account_threads_with_poll_state(
+    uin: &str,
+    threads: &[Thread],
+    poll_state: Option<&PollState>,
+) {
     let db_path = super::models::db_path_for_account(uin);
     if let Ok(mut store) = MessageStore::open(&db_path) {
-        let _ = persist_threads(&mut store, threads);
+        let _ = persist_threads_with_poll_state(&mut store, threads, poll_state);
     }
     super::thread_cache::save_threads_cache(threads);
 }
