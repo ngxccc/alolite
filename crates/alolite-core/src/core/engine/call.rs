@@ -5,7 +5,9 @@
 //! (headless mode ignores `401` invites and never opens local audio devices).
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(all(feature = "call", target_os = "linux"))]
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -23,7 +25,7 @@ use crate::protocol::call::signaling::{
     unhold_request, unhold_response, CallSignalCode, CallSignalWireData, ExtendData,
     RelayServerAddr, SrtpKeyMaterial,
 };
-use crate::protocol::call::srtp::SrtpContext;
+use crate::protocol::call::srtp::{extract_rtp_payload, SrtpContext};
 use crate::protocol::call::zrtp::{
     ControlBody, ReqForwardSubCmd, ZRTPPacket, ZrtpCmd, MSG_AUDIO_RTP_DOWN,
 };
@@ -33,8 +35,8 @@ use crate::protocol::call::{
 use crate::protocol::messaging::{CallOutcome, ChatMessage, MessageKind};
 use crate::protocol::session::Session;
 use crate::services::call_media::{
-    normalize_device_id, NetEq, NetEqConfig, NullAudioBackend, NullOpusDecoder, NullOpusEncoder,
-    OpusDecoderBackend, OpusEncoderBackend, FRAME_SAMPLES,
+    normalize_device_id, NetEq, NetEqConfig, NullOpusDecoder, NullOpusEncoder, OpusDecoderBackend,
+    OpusEncoderBackend, FRAME_SAMPLES,
 };
 use crate::storage::{MessageStore, StoredMessage};
 
@@ -80,7 +82,11 @@ struct CallManagerState {
     session: CallSession,
     peer_name: Option<String>,
     peer_avatar: Option<String>,
+    local_media_uid: Option<u32>,
+    peer_media_uid: Option<u32>,
     relay_servers: Vec<RelayServerAddr>,
+    selected_relay: Option<RelayServerAddr>,
+    public_p2p_addr: Option<String>,
     p2p_candidates: Vec<SocketAddr>,
     srtp_key: Option<SrtpKeyMaterial>,
     started_at_ms: Option<i64>,
@@ -88,7 +94,7 @@ struct CallManagerState {
     media_task: Option<tokio::task::JoinHandle<()>>,
     media_cmd_tx: Option<mpsc::UnboundedSender<MediaLoopCmd>>,
     stop_audio_flag: Option<Arc<AtomicBool>>,
-    audio_thread: Option<std::thread::JoinHandle<()>>,
+    audio_threads: Vec<std::thread::JoinHandle<()>>,
     selected_mic_id: Option<String>,
     selected_speaker_id: Option<String>,
     audio_device_opened_count: usize,
@@ -102,6 +108,14 @@ pub struct CallManager {
     echo_probe_timeout: Duration,
     force_null_audio: bool,
     srtp_drop_count: AtomicU64,
+    mic_volume_pct: Arc<AtomicU8>,
+    speaker_volume_pct: Arc<AtomicU8>,
+    auto_mic_agc: Arc<AtomicBool>,
+    auto_speaker_agc: Arc<AtomicBool>,
+    live_mic_level: Arc<AtomicU8>,
+    live_spk_level: Arc<AtomicU8>,
+    live_mic_gain_pct: Arc<AtomicU8>,
+    live_spk_gain_pct: Arc<AtomicU8>,
 }
 
 impl Default for CallManager {
@@ -120,6 +134,14 @@ impl CallManager {
             echo_probe_timeout: DEFAULT_ECHO_PROBE_TIMEOUT,
             force_null_audio: false,
             srtp_drop_count: AtomicU64::new(0),
+            mic_volume_pct: Arc::new(AtomicU8::new(100)),
+            speaker_volume_pct: Arc::new(AtomicU8::new(100)),
+            auto_mic_agc: Arc::new(AtomicBool::new(true)),
+            auto_speaker_agc: Arc::new(AtomicBool::new(true)),
+            live_mic_level: Arc::new(AtomicU8::new(0)),
+            live_spk_level: Arc::new(AtomicU8::new(0)),
+            live_mic_gain_pct: Arc::new(AtomicU8::new(100)),
+            live_spk_gain_pct: Arc::new(AtomicU8::new(100)),
         }
     }
 
@@ -136,6 +158,14 @@ impl CallManager {
             echo_probe_timeout,
             force_null_audio: true,
             srtp_drop_count: AtomicU64::new(0),
+            mic_volume_pct: Arc::new(AtomicU8::new(100)),
+            speaker_volume_pct: Arc::new(AtomicU8::new(100)),
+            auto_mic_agc: Arc::new(AtomicBool::new(true)),
+            auto_speaker_agc: Arc::new(AtomicBool::new(true)),
+            live_mic_level: Arc::new(AtomicU8::new(0)),
+            live_spk_level: Arc::new(AtomicU8::new(0)),
+            live_mic_gain_pct: Arc::new(AtomicU8::new(100)),
+            live_spk_gain_pct: Arc::new(AtomicU8::new(100)),
         }
     }
 
@@ -355,6 +385,20 @@ impl CoreEngine {
         let relays = resp.relay_servers();
         let p2p_cands = resp.p2p_candidates();
         let srtp_key = resp.srtp_key_material();
+        // Outgoing 11300 returns 32-bit VoIP media UIDs: `fromId` (caller) and `toId` (callee).
+        // Verified in ZaloCall ZCallInfo::_prepareCallConfig (0x1000d4552).
+        let local_media_uid = resp.from_media_uid_u32();
+        let peer_media_uid = resp.to_media_uid_u32();
+        crate::logger::call_debug(&format!(
+            "[DEBUG-call] 11300_ok call_id={call_id} sess_len={} relays={} p2p={} has_srtp={} has_raw_rtp_ip={} has_from_uid={} has_to_uid={}",
+            sess_id.len(),
+            relays.len(),
+            p2p_cands.len(),
+            srtp_key.is_some(),
+            resp.rtp_ip.is_some(),
+            local_media_uid.is_some(),
+            peer_media_uid.is_some(),
+        ));
 
         let (resolved_name, resolved_avatar) =
             self.resolve_call_peer(&peer_id, peer_name, peer_avatar);
@@ -367,7 +411,11 @@ impl CoreEngine {
                 .unwrap_or_else(|e| e.into_inner());
             g.peer_name = resolved_name;
             g.peer_avatar = resolved_avatar;
+            g.local_media_uid = local_media_uid;
+            g.peer_media_uid = peer_media_uid;
             g.relay_servers = relays;
+            g.selected_relay = None;
+            g.public_p2p_addr = None;
             g.p2p_candidates = p2p_cands;
             g.srtp_key = srtp_key;
             g.started_at_ms = None;
@@ -494,6 +542,33 @@ impl CoreEngine {
         Ok(())
     }
 
+    /// Adjust live software microphone and speaker volume percentages (`0..=150`).
+    pub fn set_call_volume(&self, mic_pct: u8, speaker_pct: u8) {
+        self.call_manager
+            .mic_volume_pct
+            .store(mic_pct.min(150), Ordering::Relaxed);
+        self.call_manager
+            .speaker_volume_pct
+            .store(speaker_pct.min(150), Ordering::Relaxed);
+    }
+
+    /// Configure Auto (AGC) vs Manual mode and volume percentages (`0..=150`) for mic and speaker.
+    pub fn set_call_audio_config(
+        &self,
+        auto_mic: bool,
+        auto_speaker: bool,
+        mic_pct: u8,
+        speaker_pct: u8,
+    ) {
+        self.call_manager
+            .auto_mic_agc
+            .store(auto_mic, Ordering::Relaxed);
+        self.call_manager
+            .auto_speaker_agc
+            .store(auto_speaker, Ordering::Relaxed);
+        self.set_call_volume(mic_pct, speaker_pct);
+    }
+
     /// Dispatch a parsed VoIP signaling event (`401..409`) from WS `604` or `601..603`.
     pub async fn handle_voip_signal(
         self: &Arc<Self>,
@@ -542,7 +617,16 @@ impl CoreEngine {
                 let relays = signal.relay_servers();
                 let p2p_cands = signal.p2p_candidates();
                 let srtp_key = signal.srtp_key_material();
-                let (resolved_name, resolved_avatar) = self.resolve_call_peer(&peer_id, None, None);
+                // Incoming invite (`act: "request"` / `401`) carries `uidTo` (callee's local media UID)
+                // and `uidFrom` (caller's peer media UID). Verified in ZaloCall
+                // ZCallInfo::_prepareCallConfig(ZIncomingCallInfo) (0x1000d63ba: `pshufd $0xe1`).
+                let local_media_uid = signal.to_media_uid_u32();
+                let peer_media_uid = signal.from_media_uid_u32();
+                let (resolved_name, resolved_avatar) = self.resolve_call_peer(
+                    &peer_id,
+                    signal.peer_display_name(),
+                    signal.peer_avatar_url(),
+                );
 
                 let mut g = self
                     .call_manager
@@ -561,7 +645,11 @@ impl CoreEngine {
                         if was_idle && g.session.state() == CallState::IncomingRinging {
                             g.peer_name = resolved_name;
                             g.peer_avatar = resolved_avatar;
+                            g.local_media_uid = local_media_uid;
+                            g.peer_media_uid = peer_media_uid;
                             g.relay_servers = relays;
+                            g.selected_relay = None;
+                            g.public_p2p_addr = None;
                             g.p2p_candidates = p2p_cands;
                             g.srtp_key = srtp_key;
                             g.started_at_ms = None;
@@ -709,6 +797,10 @@ impl CoreEngine {
     }
 
     async fn execute_call_effects(self: &Arc<Self>, s_snap: &Session, effects: Vec<CallEffect>) {
+        eprintln!(
+            "[DEBUG-call] execute_effects count={} effects={effects:?}",
+            effects.len()
+        );
         let mut needs_teardown_complete = false;
         let mut finished_reason: Option<CallEndReason> = None;
 
@@ -847,7 +939,11 @@ impl CoreEngine {
                     .unwrap_or_default();
                 g.peer_name = None;
                 g.peer_avatar = None;
+                g.local_media_uid = None;
+                g.peer_media_uid = None;
                 g.relay_servers.clear();
+                g.selected_relay = None;
+                g.public_p2p_addr = None;
                 g.p2p_candidates.clear();
                 g.srtp_key = None;
                 g.started_at_ms = None;
@@ -946,36 +1042,59 @@ impl CoreEngine {
         if call_id == 0 || peer_id.is_empty() {
             return;
         }
+        crate::logger::call_debug(&format!(
+            "[DEBUG-call] send_signal sig={sig:?} call_id={call_id}"
+        ));
 
         let res = match sig {
             CallSignalCode::Request => {
-                send_request(s_snap, &peer_id, call_id, &sess_id, &ExtendData::default()).await
-            }
-            CallSignalCode::RingRing => {
-                send_ring_ring(s_snap, &peer_id, call_id, &sess_id, 0).await
-            }
-            CallSignalCode::Answer => {
-                let status = {
+                let (server_addr, extra_info) = {
                     let g = self
                         .call_manager
                         .state
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
-                    if g.session.state() == CallState::Ending {
+                    build_signal_relay_and_p2p_fields(
+                        g.selected_relay.as_ref(),
+                        &g.relay_servers,
+                        g.public_p2p_addr.as_deref(),
+                    )
+                };
+                let ext = ExtendData {
+                    server_addr,
+                    extra_info,
+                    ..ExtendData::default()
+                };
+                send_request(s_snap, &peer_id, call_id, &sess_id, &ext).await
+            }
+            CallSignalCode::RingRing => {
+                send_ring_ring(s_snap, &peer_id, call_id, &sess_id, 0).await
+            }
+            CallSignalCode::Answer => {
+                let (status, server_addr, extra_info) = {
+                    let g = self
+                        .call_manager
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let st = if g.session.state() == CallState::Ending {
                         1
                     } else {
                         0
-                    }
+                    };
+                    let (srv, p2p_info) = build_signal_relay_and_p2p_fields(
+                        g.selected_relay.as_ref(),
+                        &g.relay_servers,
+                        g.public_p2p_addr.as_deref(),
+                    );
+                    (st, srv, p2p_info)
                 };
-                answer_call(
-                    s_snap,
-                    &peer_id,
-                    call_id,
-                    &sess_id,
-                    status,
-                    &ExtendData::default(),
-                )
-                .await
+                let ext = ExtendData {
+                    server_addr,
+                    extra_info,
+                    ..ExtendData::default()
+                };
+                answer_call(s_snap, &peer_id, call_id, &sess_id, status, &ext).await
             }
             CallSignalCode::AnswerAck => send_answer_ack(s_snap, &peer_id, call_id, &sess_id).await,
             CallSignalCode::Cancel => cancel_call(s_snap, &peer_id, call_id, &sess_id).await,
@@ -985,12 +1104,19 @@ impl CoreEngine {
             CallSignalCode::HoldReq => hold_request(s_snap, &peer_id, call_id, &sess_id).await,
             CallSignalCode::UnholdReq => unhold_request(s_snap, &peer_id, call_id, &sess_id).await,
             CallSignalCode::Conf => {
-                send_conf(s_snap, &peer_id, call_id, false, !is_muted, None).await
+                // In Zalo's 12006 `/api/voicecall/conf` contract, `isOnMic: 1` means mic is muted
+                // on the peer's UI and `0` clears the mute indicator.
+                send_conf(s_snap, &peer_id, call_id, false, is_muted, None).await
             }
             _ => return,
         };
 
+        crate::logger::call_debug(&format!(
+            "[DEBUG-call] send_signal_done sig={sig:?} ok={}",
+            res.is_ok()
+        ));
         if let Err(e) = res {
+            crate::logger::call_debug(&format!("[DEBUG-call] send_signal_err sig={sig:?} err={e}"));
             crate::logger::log_error("call::signal", &format!("signal {sig:?} failed: {e}"));
         }
     }
@@ -1050,7 +1176,19 @@ impl CoreEngine {
             return;
         }
 
-        let (call_id, sess_id, peer_id, is_caller, relays, p2p_cands, srtp_key, init_mic, init_spk) = {
+        let (
+            call_id,
+            sess_id,
+            peer_id,
+            is_caller,
+            local_media_uid,
+            peer_media_uid,
+            relays,
+            p2p_cands,
+            srtp_key,
+            init_mic,
+            init_spk,
+        ) = {
             let g = self
                 .call_manager
                 .state
@@ -1061,6 +1199,8 @@ impl CoreEngine {
                 g.session.sess_id().unwrap_or_default().to_string(),
                 g.session.peer_id().unwrap_or_default().to_string(),
                 g.session.direction() == Some(CallDirection::Outgoing),
+                g.local_media_uid,
+                g.peer_media_uid,
                 g.relay_servers.clone(),
                 g.p2p_candidates.clone(),
                 g.srtp_key.clone(),
@@ -1068,16 +1208,31 @@ impl CoreEngine {
                 g.selected_speaker_id.clone(),
             )
         };
-        let uid: u32 = s_snap
-            .login
-            .as_ref()
-            .and_then(|l| l.uin.parse::<u32>().ok())
-            .unwrap_or(0);
-        let peer_uid: u32 = peer_id.parse::<u32>().unwrap_or(0);
+        // Use the 32-bit VoIP media UIDs (`fromId`/`toId` or `uidTo`/`uidFrom`) assigned by Zalo's
+        // signaling server (`_sendRequestInitZRTPToServer` @ `0x10019780e`). Fall back to parsed
+        // account IDs only in synthetic unit tests where media UIDs are omitted.
+        let uid: u32 = local_media_uid.unwrap_or_else(|| {
+            s_snap
+                .login
+                .as_ref()
+                .and_then(|l| l.uin.parse::<u64>().ok())
+                .unwrap_or(0) as u32
+        });
+        let peer_uid: u32 =
+            peer_media_uid.unwrap_or_else(|| peer_id.parse::<u64>().unwrap_or(0) as u32);
         let is_headless = self.sink.is_headless();
         let force_null_audio = self.call_manager.force_null_audio;
         let echo_timeout = self.call_manager.echo_probe_timeout;
         let watchdog_timeout = self.call_manager.media_watchdog_timeout;
+        crate::logger::call_debug(&format!(
+            "[DEBUG-call] media_loop_start call_id={call_id} is_caller={is_caller} relays={} has_local_media_uid={} has_peer_media_uid={} has_srtp={} init_mic={:?} init_spk={:?}",
+            relays.len(),
+            local_media_uid.is_some(),
+            peer_media_uid.is_some(),
+            srtp_key.is_some(),
+            init_mic,
+            init_spk,
+        ));
 
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<MediaLoopCmd>();
         let stop_audio_flag = Arc::new(AtomicBool::new(false));
@@ -1099,33 +1254,92 @@ impl CoreEngine {
             } else {
                 select_relay_with_echo(&socket, &relays, uid, echo_timeout).await
             };
+            crate::logger::call_debug(&format!(
+                "[DEBUG-call] echo_done call_id={call_id} relay_found={} relay_addr={:?}",
+                relay_addr.is_some(),
+                relay_addr,
+            ));
 
             // Send InitZRTP (cmd = 11 caller / 12 callee) when relay is available.
             let mut server_token = 0u32;
             let mut zrtp_ready = false;
             if let Some(target) = relay_addr {
                 let init_pkt =
-                    ZRTPPacket::init_call(is_caller, 1, uid, call_id, peer_uid, sess_id.clone());
+                    ZRTPPacket::init_call(is_caller, 0, uid, call_id, peer_uid, sess_id.clone());
                 // Best-effort initial ZRTP handshake packet; timeout handles loss.
                 let _ = socket.send_to(&init_pkt.encode(), target).await;
 
-                // Wait for InitResponse (0x02) and verify res == 0 before marking media ready.
+                // Wait for InitResponse (0x02, cmd = 11/12) and verify res == 0 before marking media ready.
                 let mut buf = [0u8; 2048];
                 let deadline = tokio::time::Instant::now() + echo_timeout;
                 while let Ok(Ok((n, _))) =
                     tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await
                 {
+                    let decoded = ZRTPPacket::decode(&buf[..n]);
+                    eprintln!(
+                        "[DEBUG-call] init_rx n={n} decoded_ok={} pkt={:?}",
+                        decoded.is_ok(),
+                        decoded.as_ref().ok().map(|p| match p {
+                            ZRTPPacket::Control {
+                                is_reply,
+                                cmd,
+                                sub_cmd,
+                                ..
+                            } => format!("Control(reply={is_reply},cmd={cmd},sub={sub_cmd})"),
+                            _ => "Other".to_string(),
+                        })
+                    );
                     if let Ok(ZRTPPacket::Control {
                         is_reply: true,
+                        cmd,
                         token,
                         body: ControlBody::Raw(bytes),
                         ..
-                    }) = ZRTPPacket::decode(&buf[..n])
+                    }) = decoded
                     {
+                        if cmd != ZrtpCmd::InitCallCaller as u16
+                            && cmd != ZrtpCmd::InitCallCallee as u16
+                        {
+                            // Ignore late Echo replies (`cmd = 5`) from slower candidate relays.
+                            continue;
+                        }
                         if is_init_response_ok(&bytes) {
-                            server_token = token;
+                            server_token = if bytes.len() >= 12 {
+                                u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]])
+                            } else {
+                                token
+                            };
+                            let public_addr = parse_init_response_public_addr(&bytes);
+                            let matched_relay = relays
+                                .iter()
+                                .find(|r| {
+                                    r.ip == target.ip().to_string() && r.port == target.port()
+                                })
+                                .cloned()
+                                .unwrap_or_else(|| RelayServerAddr {
+                                    ip: target.ip().to_string(),
+                                    port: target.port(),
+                                    server_type: 1,
+                                    rtcp_addr: None,
+                                    rtp_ipv6: None,
+                                    rtcp_ipv6: None,
+                                });
+                            {
+                                let mut g = engine
+                                    .call_manager
+                                    .state
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                g.selected_relay = Some(matched_relay);
+                                g.public_p2p_addr = public_addr;
+                            }
                             zrtp_ready = true;
                         } else {
+                            eprintln!(
+                                "[DEBUG-call] init_resp_non_zero len={} prefix={:02x?}",
+                                bytes.len(),
+                                &bytes[..bytes.len().min(8)]
+                            );
                             crate::logger::log_error(
                                 "call::zrtp",
                                 "InitResponse returned non-zero status",
@@ -1135,6 +1349,9 @@ impl CoreEngine {
                     }
                 }
             }
+            crate::logger::call_debug(&format!(
+                "[DEBUG-call] zrtp_done call_id={call_id} zrtp_ready={zrtp_ready}"
+            ));
 
             if !relays.is_empty() && !zrtp_ready {
                 crate::logger::log_error(
@@ -1181,12 +1398,13 @@ impl CoreEngine {
             // EDGE-5: never open hardware audio devices in headless mode.
             let muted_flag = Arc::new(AtomicBool::new(false));
             let held_flag = Arc::new(AtomicBool::new(false));
-            let reopen_devices_flag = Arc::new(AtomicBool::new(false));
+            let reopen_mic_flag = Arc::new(AtomicBool::new(false));
+            let reopen_spk_flag = Arc::new(AtomicBool::new(false));
             let pending_devices = Arc::new(StdMutex::new((init_mic, init_spk)));
             let (tx_pcm_up, mut rx_pcm_up) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
-            let (tx_pcm_down, rx_pcm_down) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
+            let neteq = Arc::new(StdMutex::new(create_neteq()));
 
-            let spawned_audio = if !is_headless
+            let spawned_threads = if !is_headless
                 && !force_null_audio
                 && cfg!(all(feature = "call", target_os = "linux"))
             {
@@ -1198,27 +1416,35 @@ impl CoreEngine {
                         .unwrap_or_else(|e| e.into_inner());
                     g.audio_device_opened_count += 1;
                 }
-                spawn_audio_thread(
+                spawn_audio_threads(
                     Arc::clone(&muted_flag),
                     Arc::clone(&held_flag),
                     Arc::clone(&stop_audio_for_loop),
-                    Arc::clone(&reopen_devices_flag),
+                    Arc::clone(&reopen_mic_flag),
+                    Arc::clone(&reopen_spk_flag),
                     Arc::clone(&pending_devices),
+                    Arc::clone(&engine.call_manager.mic_volume_pct),
+                    Arc::clone(&engine.call_manager.speaker_volume_pct),
+                    Arc::clone(&engine.call_manager.auto_mic_agc),
+                    Arc::clone(&engine.call_manager.auto_speaker_agc),
+                    Arc::clone(&engine.call_manager.live_mic_level),
+                    Arc::clone(&engine.call_manager.live_spk_level),
+                    Arc::clone(&engine.call_manager.live_mic_gain_pct),
+                    Arc::clone(&engine.call_manager.live_spk_gain_pct),
                     tx_pcm_up,
-                    rx_pcm_down,
+                    Arc::clone(&neteq),
                 )
             } else {
                 drop(tx_pcm_up);
-                drop(rx_pcm_down);
-                None
+                Vec::new()
             };
-            if let Some(jh) = spawned_audio {
+            if !spawned_threads.is_empty() {
                 let mut g = engine
                     .call_manager
                     .state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                g.audio_thread = Some(jh);
+                g.audio_threads = spawned_threads;
             }
 
             let mut srtp_tx = srtp_key
@@ -1230,7 +1456,6 @@ impl CoreEngine {
 
             let mut encoder = create_opus_encoder();
             let mut opus_out_buf = [0u8; 512];
-            let mut neteq = create_neteq();
             let mut p2p =
                 P2pController::new(is_caller, call_id, uid, server_token, sess_id.clone());
             if let Some(ip) = probe_local_ipv4() {
@@ -1258,12 +1483,23 @@ impl CoreEngine {
             }
 
             let mut rtp_seq: u16 = 1;
+            let mut tx_octets: u32 = 0;
             let mut last_rx_at = Instant::now();
             let mut recv_buf = [0u8; 2048];
             let mut ping_tick = tokio::time::interval(Duration::from_secs(5));
             let mut route_probe_tick = tokio::time::interval(Duration::from_secs(1));
             let mut change_addr_tick = tokio::time::interval(Duration::from_millis(500));
             let mut watchdog_tick = tokio::time::interval(Duration::from_millis(200));
+            let mut levels_tick = tokio::time::interval(Duration::from_millis(100));
+            let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
+            let mut tx_rtp: u64 = 0;
+            let mut tx_enc_err: u64 = 0;
+            let mut tx_srtp_err: u64 = 0;
+            let mut rx_udp: u64 = 0;
+            let mut rx_relay_audio: u64 = 0;
+            let mut rx_relay_other: u64 = 0;
+            let mut rx_p2p_audio: u64 = 0;
+            let mut rx_decode_ok: u64 = 0;
 
             loop {
                 tokio::select! {
@@ -1276,13 +1512,21 @@ impl CoreEngine {
                                 held_flag.store(h, Ordering::Relaxed);
                             }
                             MediaLoopCmd::SetDevices { mic_id, speaker_id } => {
-                                {
+                                let (mic_changed, spk_changed) = {
                                     let mut dev_g = pending_devices
                                         .lock()
                                         .unwrap_or_else(|e| e.into_inner());
+                                    let mc = dev_g.0 != mic_id;
+                                    let sc = dev_g.1 != speaker_id;
                                     *dev_g = (mic_id, speaker_id);
+                                    (mc, sc)
+                                };
+                                if mic_changed {
+                                    reopen_mic_flag.store(true, Ordering::Release);
                                 }
-                                reopen_devices_flag.store(true, Ordering::Release);
+                                if spk_changed {
+                                    reopen_spk_flag.store(true, Ordering::Release);
+                                }
                             }
                             MediaLoopCmd::Stop { send_end_call_pkt } => {
                                 if send_end_call_pkt {
@@ -1298,17 +1542,25 @@ impl CoreEngine {
                     }
                     Some(pcm) = rx_pcm_up.recv() => {
                         if (relay_addr.is_some() || p2p.active_peer().is_some())
-                            && !muted_flag.load(Ordering::Relaxed)
                             && !held_flag.load(Ordering::Relaxed)
                         {
-                            if let Ok(enc_len) = encoder.encode(&pcm, &mut opus_out_buf) {
-                                if enc_len > 0 {
-                                    let rtp_pkt = build_minimal_rtp(rtp_seq, &opus_out_buf[..enc_len]);
+                            // Send silent Opus frames while muted so the peer's media watchdog
+                            // does not treat a muted mic as a dropped connection.
+                            let effective_pcm = if muted_flag.load(Ordering::Relaxed) {
+                                [0i16; FRAME_SAMPLES]
+                            } else {
+                                pcm
+                            };
+                            match encoder.encode(&effective_pcm, &mut opus_out_buf) {
+                                Ok(enc_len) if enc_len > 0 => {
+                                    let rtp_pkt =
+                                        build_minimal_rtp(rtp_seq, uid, &opus_out_buf[..enc_len]);
                                     rtp_seq = rtp_seq.wrapping_add(1);
                                     let wire_rtp = if let Some(ctx) = srtp_tx.as_mut() {
                                         match ctx.protect_rtp(&rtp_pkt) {
                                             Ok(pkt) => pkt,
                                             Err(e) => {
+                                                tx_srtp_err += 1;
                                                 crate::logger::log_error(
                                                     "call::srtp",
                                                     &format!("SRTP protect failed, dropping RTP packet: {e}"),
@@ -1319,27 +1571,51 @@ impl CoreEngine {
                                     } else {
                                         rtp_pkt
                                     };
+                                    tx_rtp += 1;
+                                    tx_octets = tx_octets.wrapping_add(enc_len as u32);
+                                    if tx_rtp == 1 {
+                                        crate::logger::call_debug(&format!(
+                                            "[DEBUG-call] first_tx_rtp seq={rtp_seq} ssrc={uid} has_token={} opus_len={enc_len} wire_len={}",
+                                            server_token != 0,
+                                            wire_rtp.len(),
+                                        ));
+                                    }
                                     let outbound = p2p.build_outbound_audio(wire_rtp);
                                     dispatch_p2p_outbound(&socket, relay_addr, vec![outbound]).await;
+                                }
+                                Ok(_) => {}
+                                Err(_) => {
+                                    tx_enc_err += 1;
                                 }
                             }
                         }
                     }
                     Ok((n, src)) = socket.recv_from(&mut recv_buf) => {
+                        rx_udp += 1;
                         match ZRTPPacket::decode(&recv_buf[..n]) {
                             Ok(ZRTPPacket::RelayMediaDown { msg_type, payload }) => {
-                                if msg_type == MSG_AUDIO_RTP_DOWN
-                                    && !held_flag.load(Ordering::Relaxed)
-                                    && decode_and_queue_audio(
-                                        &payload,
-                                        srtp_rx.as_mut(),
-                                        &mut neteq,
-                                        &tx_pcm_down,
-                                        &engine.call_manager.srtp_drop_count,
-                                    )
-                                {
-                                    last_rx_at = Instant::now();
-                                    p2p.on_relay_audio_received(now_ms());
+                                if msg_type == MSG_AUDIO_RTP_DOWN {
+                                    rx_relay_audio += 1;
+                                    if !held_flag.load(Ordering::Relaxed)
+                                        && decode_and_queue_audio(
+                                            &payload,
+                                            srtp_rx.as_mut(),
+                                            &neteq,
+                                            &engine.call_manager.srtp_drop_count,
+                                        )
+                                    {
+                                        rx_decode_ok += 1;
+                                        last_rx_at = Instant::now();
+                                        p2p.on_relay_audio_received(now_ms());
+                                    }
+                                } else {
+                                    rx_relay_other += 1;
+                                    if rx_relay_other <= 3 {
+                                        crate::logger::call_debug(&format!(
+                                            "[DEBUG-call] rx_relay_other msg_type={msg_type} len={}",
+                                            payload.len()
+                                        ));
+                                    }
                                 }
                             }
                             Ok(ZRTPPacket::P2p {
@@ -1360,15 +1636,16 @@ impl CoreEngine {
                                 dispatch_p2p_outbound(&socket, relay_addr, replies).await;
                                 match outcome {
                                     P2pRxOutcome::AudioMedia(payload) => {
+                                        rx_p2p_audio += 1;
                                         if !held_flag.load(Ordering::Relaxed)
                                             && decode_and_queue_audio(
                                                 &payload,
                                                 srtp_rx.as_mut(),
-                                                &mut neteq,
-                                                &tx_pcm_down,
+                                                &neteq,
                                                 &engine.call_manager.srtp_drop_count,
                                             )
                                         {
+                                            rx_decode_ok += 1;
                                             last_rx_at = Instant::now();
                                         }
                                     }
@@ -1417,7 +1694,48 @@ impl CoreEngine {
                         let pkts = p2p.on_change_address_tick(now_ms());
                         dispatch_p2p_outbound(&socket, relay_addr, pkts).await;
                     }
+                    _ = levels_tick.tick() => {
+                        if !is_headless {
+                            engine.sink.emit(CoreEvent::CallAudioLevels {
+                                mic_level: engine.call_manager.live_mic_level.load(Ordering::Relaxed),
+                                speaker_level: engine.call_manager.live_spk_level.load(Ordering::Relaxed),
+                                mic_gain_pct: engine.call_manager.live_mic_gain_pct.load(Ordering::Relaxed),
+                                speaker_gain_pct: engine.call_manager.live_spk_gain_pct.load(Ordering::Relaxed),
+                            });
+                        }
+                    }
+                    _ = stats_tick.tick() => {
+                        if tx_rtp > 0 && (relay_addr.is_some() || p2p.active_peer().is_some()) {
+                            let rtp_ts = u32::from(rtp_seq).wrapping_mul(FRAME_SAMPLES as u32);
+                            let rtcp = build_audio_rtcp_sr_sdes(
+                                uid,
+                                now_ms(),
+                                rtp_ts,
+                                tx_rtp as u32,
+                                tx_octets,
+                            );
+                            let outbound = p2p.build_outbound_rtcp(rtcp);
+                            dispatch_p2p_outbound(&socket, relay_addr, vec![outbound]).await;
+                        }
+                        let srtp_drop = engine.call_manager.srtp_drop_count.load(Ordering::Relaxed);
+                        let (nq, ncarry) = {
+                            let g = neteq.lock().unwrap_or_else(|e| e.into_inner());
+                            (g.queued_packets(), g.carry_samples())
+                        };
+                        crate::logger::call_debug(&format!(
+                            "[DEBUG-call] media_stats tx_rtp={tx_rtp} tx_enc_err={tx_enc_err} tx_srtp_err={tx_srtp_err} rx_udp={rx_udp} rx_relay_aud={rx_relay_audio} rx_relay_oth={rx_relay_other} rx_p2p_aud={rx_p2p_audio} rx_dec_ok={rx_decode_ok} srtp_drop={srtp_drop} neteq_q={nq} neteq_carry={ncarry} p2p_active={} srtp_tx={} srtp_rx={}",
+                            p2p.active_peer().is_some(),
+                            srtp_tx.is_some(),
+                            srtp_rx.is_some(),
+                        ));
+                    }
                     _ = watchdog_tick.tick() => {
+                        // Do not fire MediaWatchdogTimeout while the call is intentionally held,
+                        // since both endpoints may pause audio RTP during hold.
+                        if held_flag.load(Ordering::Relaxed) {
+                            last_rx_at = Instant::now();
+                            continue;
+                        }
                         if last_rx_at.elapsed() >= watchdog_timeout {
                             let effs = {
                                 let mut g = engine
@@ -1447,13 +1765,15 @@ impl CoreEngine {
                     .state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                g.audio_thread.take()
+                std::mem::take(&mut g.audio_threads)
             };
-            if let Some(jh) = remaining_audio {
+            if !remaining_audio.is_empty() {
                 // Best-effort join on blocking pool so Tokio worker thread is never blocked.
                 let _ = tokio::task::spawn_blocking(move || {
-                    if jh.join().is_err() {
-                        crate::logger::log_error("call::audio", "audio thread panicked");
+                    for jh in remaining_audio {
+                        if jh.join().is_err() {
+                            crate::logger::log_error("call::audio", "audio thread panicked");
+                        }
                     }
                 })
                 .await;
@@ -1471,7 +1791,7 @@ impl CoreEngine {
     }
 
     async fn stop_media_loop(&self, send_end_call_pkt: bool) {
-        let (tx, handle, stop_flag, audio_thread) = {
+        let (tx, handle, stop_flag, audio_threads) = {
             let mut g = self
                 .call_manager
                 .state
@@ -1481,7 +1801,7 @@ impl CoreEngine {
                 g.media_cmd_tx.take(),
                 g.media_task.take(),
                 g.stop_audio_flag.take(),
-                g.audio_thread.take(),
+                std::mem::take(&mut g.audio_threads),
             )
         };
         if let Some(tx) = tx {
@@ -1504,11 +1824,13 @@ impl CoreEngine {
         if let Some(flag) = stop_flag {
             flag.store(true, Ordering::Relaxed);
         }
-        if let Some(jh) = audio_thread {
+        if !audio_threads.is_empty() {
             // Best-effort join on blocking pool so Tokio worker thread is never blocked.
             let _ = tokio::task::spawn_blocking(move || {
-                if jh.join().is_err() {
-                    crate::logger::log_error("call::audio", "audio thread panicked");
+                for jh in audio_threads {
+                    if jh.join().is_err() {
+                        crate::logger::log_error("call::audio", "audio thread panicked");
+                    }
                 }
             })
             .await;
@@ -1526,23 +1848,82 @@ fn is_init_response_ok(payload: &[u8]) -> bool {
     }
 }
 
+/// Extract the optional `u16le`-prefixed public reflex address (`"ip|port"`) from `InitResponse`
+/// (`ZRTPPacket::_parsePacketInternal` @ `0x10016c32a`: packet offset `+0x21` = body offset `+12`).
+fn parse_init_response_public_addr(payload: &[u8]) -> Option<String> {
+    if payload.len() < 14 {
+        return None;
+    }
+    let len = u16::from_le_bytes([payload[12], payload[13]]) as usize;
+    if len == 0 || payload.len() < 14 + len {
+        return None;
+    }
+    std::str::from_utf8(&payload[14..14 + len])
+        .ok()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn build_signal_relay_and_p2p_fields(
+    selected_relay: Option<&RelayServerAddr>,
+    relays: &[RelayServerAddr],
+    public_p2p_addr: Option<&str>,
+) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    let mut ordered: Vec<&RelayServerAddr> = Vec::with_capacity(relays.len() + 1);
+    if let Some(sel) = selected_relay {
+        ordered.push(sel);
+    }
+    for r in relays {
+        if !ordered
+            .iter()
+            .any(|existing| existing.ip == r.ip && existing.port == r.port)
+        {
+            ordered.push(r);
+        }
+    }
+    let server_addr = if ordered.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Array(
+            ordered
+                .into_iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "rtp": r.rtp_host_port(),
+                        "rtcp": r.rtcp_host_port(),
+                        "rtpIPv6": r.rtp_ipv6.as_deref().unwrap_or(""),
+                        "rtcpIPv6": r.rtcp_ipv6.as_deref().unwrap_or(""),
+                        "tpType": 0,
+                    })
+                })
+                .collect(),
+        ))
+    };
+    let extra_info = public_p2p_addr
+        .filter(|s| !s.is_empty())
+        .map(|addr| serde_json::json!({ "p2pAddr": addr }));
+    (server_addr, extra_info)
+}
+
 async fn select_relay_with_echo(
     socket: &UdpSocket,
     relays: &[RelayServerAddr],
-    uid: u32,
+    _uid: u32,
     timeout: Duration,
 ) -> Option<SocketAddr> {
     if relays.is_empty() {
         return None;
     }
 
+    // Zalo relay Echo (cmd=5) requires magic fromId=0x003E9765 and callId=0x012F833C.
     let echo_pkt = ZRTPPacket::Control {
         is_reply: false,
         magic: 1,
         field02: 0,
         seq: 0,
-        uid,
-        token: 0,
+        uid: 0x003E_9765,
+        token: 0x012F_833C,
         cmd: ZrtpCmd::Echo as u16,
         sub_cmd: 0,
         body: ControlBody::Echo(unix_now().to_string()),
@@ -1562,31 +1943,67 @@ async fn select_relay_with_echo(
     None
 }
 
-fn build_minimal_rtp(seq: u16, payload: &[u8]) -> Vec<u8> {
-    let mut rtp = Vec::with_capacity(12 + payload.len());
-    rtp.push(0x80);
-    rtp.push(111); // Opus payload type
+fn build_minimal_rtp(seq: u16, ssrc: u32, payload: &[u8]) -> Vec<u8> {
+    let effective_ssrc = if ssrc != 0 { ssrc } else { 1 };
+    let mut rtp = Vec::with_capacity(20 + payload.len());
+    // Match ZaloCall 1-1 audio RTP header: V=2, X=1 (0x90), PT=112 (marker on first packet),
+    // 16 kHz timestamp (+320/frame), and RFC 8285 1-byte TWCC extension (id=5, len=2 bytes).
+    rtp.push(0x90);
+    rtp.push(if seq == 1 { 0x80 | 112 } else { 112 });
     rtp.extend_from_slice(&seq.to_be_bytes());
-    rtp.extend_from_slice(&((seq as u32) * (FRAME_SAMPLES as u32)).to_be_bytes());
-    rtp.extend_from_slice(&1u32.to_be_bytes());
+    rtp.extend_from_slice(&((seq as u32).wrapping_mul(FRAME_SAMPLES as u32)).to_be_bytes());
+    rtp.extend_from_slice(&effective_ssrc.to_be_bytes());
+    rtp.extend_from_slice(&[0xbe, 0xde, 0x00, 0x01, 0x51]);
+    rtp.extend_from_slice(&seq.to_be_bytes());
+    rtp.push(0x00);
     rtp.extend_from_slice(payload);
     rtp
+}
+
+/// Build compound RTCP SR (`PT=200`) + SDES (`PT=202`, empty CNAME) matching `ZaloCall` (`0x05`).
+fn build_audio_rtcp_sr_sdes(
+    ssrc: u32,
+    now_ms: u64,
+    rtp_ts: u32,
+    packets: u32,
+    octets: u32,
+) -> Vec<u8> {
+    let effective_ssrc = if ssrc != 0 { ssrc } else { 1 };
+    let secs = (now_ms / 1000) + 2_208_988_800; // Unix epoch -> NTP epoch (1900)
+    let frac = ((now_ms % 1000) << 32) / 1000;
+    let mut rtcp = Vec::with_capacity(40);
+    // SR (PT=200, length=6 32-bit words = 28 bytes)
+    rtcp.extend_from_slice(&[0x80, 200, 0x00, 0x06]);
+    rtcp.extend_from_slice(&effective_ssrc.to_be_bytes());
+    rtcp.extend_from_slice(&(secs as u32).to_be_bytes());
+    rtcp.extend_from_slice(&(frac as u32).to_be_bytes());
+    rtcp.extend_from_slice(&rtp_ts.to_be_bytes());
+    rtcp.extend_from_slice(&packets.to_be_bytes());
+    rtcp.extend_from_slice(&octets.to_be_bytes());
+    // SDES (PT=202, SC=1, length=2 32-bit words = 12 bytes, CNAME len=0)
+    rtcp.extend_from_slice(&[0x81, 202, 0x00, 0x02]);
+    rtcp.extend_from_slice(&effective_ssrc.to_be_bytes());
+    rtcp.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+    rtcp
 }
 
 fn decode_and_queue_audio(
     payload: &[u8],
     srtp_rx: Option<&mut SrtpContext>,
-    neteq: &mut NetEq<Box<dyn OpusDecoderBackend>>,
-    tx_pcm_down: &mpsc::Sender<[i16; FRAME_SAMPLES]>,
+    neteq: &Arc<StdMutex<NetEq<Box<dyn OpusDecoderBackend>>>>,
     srtp_drop_count: &AtomicU64,
 ) -> bool {
     let plain_rtp = if let Some(ctx) = srtp_rx {
         match ctx.unprotect_rtp(payload) {
             Ok(p) => p,
-            Err(_) => {
+            Err(e) => {
                 // ADV-3: drop bad SRTP HMAC and track redacted drop count.
                 let count = srtp_drop_count.fetch_add(1, Ordering::Relaxed) + 1;
                 if count == 1 || count.is_power_of_two() {
+                    crate::logger::call_debug(&format!(
+                        "[DEBUG-call] srtp_rx_drop total={count} payload_len={} err={e}",
+                        payload.len()
+                    ));
                     crate::logger::log_error(
                         "call::srtp",
                         &format!("ADV-3: dropped unauthenticated SRTP packet (total={count})"),
@@ -1598,14 +2015,12 @@ fn decode_and_queue_audio(
     } else {
         payload.to_vec()
     };
-    if plain_rtp.len() >= 12 {
-        let seq = u16::from_be_bytes([plain_rtp[2], plain_rtp[3]]);
-        neteq.push(seq, plain_rtp[12..].to_vec());
-        let mut out_pcm = [0i16; FRAME_SAMPLES];
-        if neteq.pop_frame(&mut out_pcm).is_ok() {
-            // Best-effort push decoded PCM to playback ring; drop frame if full.
-            let _ = tx_pcm_down.try_send(out_pcm);
+    if let Ok((seq, opus_payload)) = extract_rtp_payload(&plain_rtp) {
+        if opus_payload.is_empty() {
+            return false;
         }
+        let mut g = neteq.lock().unwrap_or_else(|e| e.into_inner());
+        g.push(seq, opus_payload.to_vec());
         true
     } else {
         false
@@ -1677,65 +2092,376 @@ impl OpusDecoderBackend for Box<dyn OpusDecoderBackend> {
     }
 }
 
-fn spawn_audio_thread(
+#[cfg(all(feature = "call", target_os = "linux"))]
+fn scale_pcm_pct(samples: &mut [i16], pct: u8) {
+    if pct == 100 {
+        return;
+    }
+    let factor = f32::from(pct) / 100.0;
+    for s in samples.iter_mut() {
+        let scaled = (f32::from(*s) * factor).round() as i32;
+        *s = scaled.clamp(-32_768, 32_767) as i16;
+    }
+}
+
+#[cfg(all(feature = "call", target_os = "linux"))]
+fn pcm_level_pct(samples: &[i16]) -> u8 {
+    let db = crate::services::call_media::AudioLeveler::compute_level_db(samples);
+    let norm = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+    (norm * 100.0).round() as u8
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_audio_threads(
     muted: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    reopen_devices: Arc<AtomicBool>,
+    reopen_mic: Arc<AtomicBool>,
+    reopen_spk: Arc<AtomicBool>,
     pending_devices: Arc<StdMutex<(Option<String>, Option<String>)>>,
+    mic_volume_pct: Arc<AtomicU8>,
+    speaker_volume_pct: Arc<AtomicU8>,
+    auto_mic_agc: Arc<AtomicBool>,
+    auto_speaker_agc: Arc<AtomicBool>,
+    live_mic_level: Arc<AtomicU8>,
+    live_spk_level: Arc<AtomicU8>,
+    live_mic_gain_pct: Arc<AtomicU8>,
+    live_spk_gain_pct: Arc<AtomicU8>,
     tx_up: mpsc::Sender<[i16; FRAME_SAMPLES]>,
-    mut rx_down: mpsc::Receiver<[i16; FRAME_SAMPLES]>,
-) -> Option<std::thread::JoinHandle<()>> {
+    neteq: Arc<StdMutex<NetEq<Box<dyn OpusDecoderBackend>>>>,
+) -> Vec<std::thread::JoinHandle<()>> {
     #[cfg(all(feature = "call", target_os = "linux"))]
     {
-        use crate::services::call_media::{AudioBackend, PulseAudioBackend};
-        Some(std::thread::spawn(move || {
-            let open_backend = |mic: Option<&str>, spk: Option<&str>| -> Box<dyn AudioBackend> {
-                match PulseAudioBackend::open(normalize_device_id(spk), normalize_device_id(mic)) {
-                    Ok(b) => Box::new(b),
+        use crate::services::call_media::{
+            Apm, AudioLeveler, LevelerConfig, PopOutcome, PulseCapture, PulsePlayback, CHANNELS,
+            SAMPLE_RATE_HZ,
+        };
+
+        let apm: Option<Arc<StdMutex<Apm>>> =
+            match Apm::new(SAMPLE_RATE_HZ as i32, CHANNELS as i32, true, true, true) {
+                Ok(a) => {
+                    crate::logger::call_debug("[DEBUG-call] webrtc_apm enabled (AEC+NS+HPF+AGC)");
+                    Some(Arc::new(StdMutex::new(a)))
+                }
+                Err(e) => {
+                    crate::logger::call_debug(&format!("[DEBUG-call] webrtc_apm unavailable: {e}"));
+                    None
+                }
+            };
+
+        let cap_latency_ms = Arc::new(AtomicI32::new(20));
+        let pb_latency_ms = Arc::new(AtomicI32::new(60));
+        let far_active = Arc::new(AtomicBool::new(false));
+
+        let (init_mic, init_spk) = pending_devices
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        // Thread 1: Capture thread paced by PulseAudio record clock.
+        let cap_stop = Arc::clone(&stop);
+        let cap_held = Arc::clone(&held);
+        let cap_pending = Arc::clone(&pending_devices);
+        let cap_apm = apm.as_ref().map(Arc::clone);
+        let cap_lat_out = Arc::clone(&cap_latency_ms);
+        let cap_far_active = Arc::clone(&far_active);
+        let cap_handle = std::thread::spawn(move || {
+            let open_cap = |mic: Option<&str>| -> Option<PulseCapture> {
+                match PulseCapture::open(normalize_device_id(mic)) {
+                    Ok(c) => {
+                        crate::logger::call_debug(&format!(
+                            "[DEBUG-call] capture_open ok mic={:?}",
+                            normalize_device_id(mic)
+                        ));
+                        Some(c)
+                    }
                     Err(e) => {
+                        crate::logger::call_debug(&format!(
+                            "[DEBUG-call] capture_open FAILED mic={:?} err={e}",
+                            normalize_device_id(mic)
+                        ));
                         crate::logger::log_error(
                             "call::audio",
-                            &format!("PulseAudio open failed: {e}"),
+                            &format!("PulseCapture open failed: {e}"),
                         );
-                        Box::new(NullAudioBackend::new())
+                        None
                     }
                 }
             };
 
-            let (init_mic, init_spk) = pending_devices
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            let mut backend = open_backend(init_mic.as_deref(), init_spk.as_deref());
+            let mut capture = open_cap(init_mic.as_deref());
+            let mut mic_leveler =
+                AudioLeveler::new(LevelerConfig::mic(), Some(Arc::clone(&cap_far_active)));
             let mut cap_buf = [0i16; FRAME_SAMPLES];
             let silence = [0i16; FRAME_SAMPLES];
-            while !stop.load(Ordering::Relaxed) {
-                if reopen_devices.swap(false, Ordering::AcqRel) {
-                    let (mic, spk) = pending_devices
+            let mut last_stats_at = std::time::Instant::now();
+            let mut cap_ok: u64 = 0;
+            let mut cap_err: u64 = 0;
+            let mut cap_peak: i32 = 0;
+            let mut cap_max_ms: u128 = 0;
+            let mut tx_up_drop: u64 = 0;
+
+            while !cap_stop.load(Ordering::Relaxed) {
+                if reopen_mic.swap(false, Ordering::AcqRel) {
+                    let mic = cap_pending
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
+                        .0
                         .clone();
-                    // Drop current PulseAudio streams before opening replacement devices.
-                    drop(backend);
-                    backend = open_backend(mic.as_deref(), spk.as_deref());
+                    drop(capture);
+                    capture = open_cap(mic.as_deref());
                 }
-                let is_held = held.load(Ordering::Relaxed);
-                if !is_held
-                    && !muted.load(Ordering::Relaxed)
-                    && backend.read_frame(&mut cap_buf).is_ok()
-                {
-                    let _ = tx_up.try_send(cap_buf);
+
+                let t0 = std::time::Instant::now();
+                let read_ok = match capture.as_mut() {
+                    Some(cap) => match cap.read_frame(&mut cap_buf) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            cap_err += 1;
+                            if cap_err == 1 {
+                                crate::logger::call_debug(&format!(
+                                    "[DEBUG-call] audio_read_err err={e}"
+                                ));
+                            }
+                            std::thread::sleep(Duration::from_millis(20));
+                            false
+                        }
+                    },
+                    None => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        cap_buf = silence;
+                        true
+                    }
+                };
+
+                if read_ok && !cap_held.load(Ordering::Relaxed) {
+                    cap_ok += 1;
+                    cap_max_ms = cap_max_ms.max(t0.elapsed().as_millis());
+                    if !muted.load(Ordering::Relaxed) {
+                        if let Some(ref a) = cap_apm {
+                            a.lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .process_capture(&mut cap_buf);
+                        }
+                        if auto_mic_agc.load(Ordering::Relaxed) {
+                            mic_leveler.process(&mut cap_buf);
+                            live_mic_gain_pct.store(mic_leveler.gain_pct(), Ordering::Relaxed);
+                        } else {
+                            let pct = mic_volume_pct.load(Ordering::Relaxed);
+                            scale_pcm_pct(&mut cap_buf, pct);
+                            live_mic_gain_pct.store(pct, Ordering::Relaxed);
+                        }
+                        live_mic_level.store(pcm_level_pct(&cap_buf), Ordering::Relaxed);
+                        for &s in &cap_buf {
+                            cap_peak = cap_peak.max((s as i32).abs());
+                        }
+                        if tx_up.try_send(cap_buf).is_err() {
+                            tx_up_drop += 1;
+                        }
+                    } else {
+                        live_mic_level.store(0, Ordering::Relaxed);
+                        if tx_up.try_send(silence).is_err() {
+                            tx_up_drop += 1;
+                        }
+                    }
                 }
-                let play_buf = if is_held {
-                    let _ = rx_down.try_recv();
+
+                if last_stats_at.elapsed() >= Duration::from_secs(1) {
+                    if let Some(us) = capture.as_ref().and_then(PulseCapture::latency_us) {
+                        let ms = i32::try_from((us / 1000).min(200)).unwrap_or(20);
+                        cap_lat_out.store(ms, Ordering::Relaxed);
+                    }
+                    crate::logger::call_debug(&format!(
+                        "[DEBUG-call] capture_stats cap_ok={cap_ok} cap_err={cap_err} cap_peak={cap_peak} cap_max_ms={cap_max_ms} tx_up_drop={tx_up_drop}"
+                    ));
+                    last_stats_at = std::time::Instant::now();
+                    cap_ok = 0;
+                    cap_err = 0;
+                    cap_peak = 0;
+                    cap_max_ms = 0;
+                    tx_up_drop = 0;
+                }
+            }
+        });
+
+        // Thread 2: Playout thread paced by PulseAudio playback clock (drives NetEq at exact 20 ms).
+        let pb_pending = Arc::clone(&pending_devices);
+        let pb_handle = std::thread::spawn(move || {
+            let open_pb = |spk: Option<&str>| -> Option<PulsePlayback> {
+                match PulsePlayback::open(normalize_device_id(spk)) {
+                    Ok(p) => {
+                        crate::logger::call_debug(&format!(
+                            "[DEBUG-call] playback_open ok spk={:?}",
+                            normalize_device_id(spk)
+                        ));
+                        Some(p)
+                    }
+                    Err(e) => {
+                        crate::logger::call_debug(&format!(
+                            "[DEBUG-call] playback_open FAILED spk={:?} err={e}",
+                            normalize_device_id(spk)
+                        ));
+                        crate::logger::log_error(
+                            "call::audio",
+                            &format!("PulsePlayback open failed: {e}"),
+                        );
+                        None
+                    }
+                }
+            };
+
+            let mut playback = open_pb(init_spk.as_deref());
+            let mut spk_leveler = AudioLeveler::new(LevelerConfig::speaker(), None);
+            let mut last_far_speech = std::time::Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(std::time::Instant::now);
+            let mut play_buf = [0i16; FRAME_SAMPLES];
+            let silence = [0i16; FRAME_SAMPLES];
+            let mut last_stats_at = std::time::Instant::now();
+            let mut play_ok: u64 = 0;
+            let mut play_plc: u64 = 0;
+            let mut play_buf_wait: u64 = 0;
+            let mut play_err: u64 = 0;
+            let mut play_peak: i32 = 0;
+            let mut play_max_ms: u128 = 0;
+
+            while !stop.load(Ordering::Relaxed) {
+                if reopen_spk.swap(false, Ordering::AcqRel) {
+                    let spk = pb_pending
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .1
+                        .clone();
+                    drop(playback);
+                    playback = open_pb(spk.as_deref());
+                }
+
+                let frame = if held.load(Ordering::Relaxed) {
+                    far_active.store(false, Ordering::Relaxed);
+                    live_spk_level.store(0, Ordering::Relaxed);
                     silence
                 } else {
-                    rx_down.try_recv().unwrap_or(silence)
+                    let outcome = {
+                        let mut g = neteq.lock().unwrap_or_else(|e| e.into_inner());
+                        g.pop_frame(&mut play_buf)
+                    };
+                    match outcome {
+                        Ok(
+                            PopOutcome::Decoded { .. }
+                            | PopOutcome::Carry
+                            | PopOutcome::FecRecovered,
+                        ) => {
+                            play_ok += 1;
+                            if auto_speaker_agc.load(Ordering::Relaxed) {
+                                spk_leveler.process(&mut play_buf);
+                                live_spk_gain_pct.store(spk_leveler.gain_pct(), Ordering::Relaxed);
+                            } else {
+                                let pct = speaker_volume_pct.load(Ordering::Relaxed);
+                                scale_pcm_pct(&mut play_buf, pct);
+                                live_spk_gain_pct.store(pct, Ordering::Relaxed);
+                            }
+                            live_spk_level.store(pcm_level_pct(&play_buf), Ordering::Relaxed);
+                            let sum_sq: i64 =
+                                play_buf.iter().map(|&v| i64::from(v) * i64::from(v)).sum();
+                            if sum_sq / FRAME_SAMPLES as i64 > 100_000 {
+                                last_far_speech = std::time::Instant::now();
+                                far_active.store(true, Ordering::Relaxed);
+                            } else if last_far_speech.elapsed() >= Duration::from_millis(300) {
+                                far_active.store(false, Ordering::Relaxed);
+                            }
+                            for &s in &play_buf {
+                                play_peak = play_peak.max((s as i32).abs());
+                            }
+                            play_buf
+                        }
+                        Ok(PopOutcome::Plc) => {
+                            play_plc += 1;
+                            if auto_speaker_agc.load(Ordering::Relaxed) {
+                                spk_leveler.process(&mut play_buf);
+                                live_spk_gain_pct.store(spk_leveler.gain_pct(), Ordering::Relaxed);
+                            } else {
+                                let pct = speaker_volume_pct.load(Ordering::Relaxed);
+                                scale_pcm_pct(&mut play_buf, pct);
+                                live_spk_gain_pct.store(pct, Ordering::Relaxed);
+                            }
+                            live_spk_level.store(pcm_level_pct(&play_buf), Ordering::Relaxed);
+                            play_buf
+                        }
+                        Ok(PopOutcome::Buffering) => {
+                            play_buf_wait += 1;
+                            live_spk_level.store(0, Ordering::Relaxed);
+                            if last_far_speech.elapsed() >= Duration::from_millis(300) {
+                                far_active.store(false, Ordering::Relaxed);
+                            }
+                            silence
+                        }
+                        Err(e) => {
+                            play_err += 1;
+                            live_spk_level.store(0, Ordering::Relaxed);
+                            if play_err == 1 {
+                                crate::logger::call_debug(&format!(
+                                    "[DEBUG-call] neteq_pop_err err={e}"
+                                ));
+                            }
+                            silence
+                        }
+                    }
                 };
-                let _ = backend.write_frame(&play_buf);
+
+                if let Some(ref a) = apm {
+                    a.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .process_render(&frame);
+                }
+
+                let t1 = std::time::Instant::now();
+                match playback.as_mut() {
+                    Some(pb) => {
+                        if let Err(e) = pb.write_frame(&frame) {
+                            play_err += 1;
+                            if play_err == 1 {
+                                crate::logger::call_debug(&format!(
+                                    "[DEBUG-call] audio_write_err err={e}"
+                                ));
+                            }
+                            std::thread::sleep(Duration::from_millis(20));
+                        } else {
+                            play_max_ms = play_max_ms.max(t1.elapsed().as_millis());
+                        }
+                    }
+                    None => {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+
+                if last_stats_at.elapsed() >= Duration::from_secs(1) {
+                    if let Some(us) = playback.as_ref().and_then(PulsePlayback::latency_us) {
+                        let ms = i32::try_from((us / 1000).min(200)).unwrap_or(60);
+                        pb_latency_ms.store(ms, Ordering::Relaxed);
+                    }
+                    let total_delay = (cap_latency_ms.load(Ordering::Relaxed)
+                        + pb_latency_ms.load(Ordering::Relaxed))
+                    .clamp(20, 250);
+                    if let Some(ref a) = apm {
+                        a.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .set_delay_ms(total_delay);
+                    }
+                    crate::logger::call_debug(&format!(
+                        "[DEBUG-call] playout_stats play_ok={play_ok} play_plc={play_plc} play_wait={play_buf_wait} play_err={play_err} play_peak={play_peak} play_max_ms={play_max_ms} apm_delay_ms={total_delay}"
+                    ));
+                    last_stats_at = std::time::Instant::now();
+                    play_ok = 0;
+                    play_plc = 0;
+                    play_buf_wait = 0;
+                    play_err = 0;
+                    play_peak = 0;
+                    play_max_ms = 0;
+                }
             }
-        }))
+        });
+
+        vec![cap_handle, pb_handle]
     }
     #[cfg(not(all(feature = "call", target_os = "linux")))]
     {
@@ -1743,13 +2469,21 @@ fn spawn_audio_thread(
             muted,
             held,
             stop,
-            reopen_devices,
+            reopen_mic,
+            reopen_spk,
             pending_devices,
+            mic_volume_pct,
+            speaker_volume_pct,
+            auto_mic_agc,
+            auto_speaker_agc,
+            live_mic_level,
+            live_spk_level,
+            live_mic_gain_pct,
+            live_spk_gain_pct,
             tx_up,
-            &mut rx_down,
-            NullAudioBackend::new(),
+            neteq,
         );
-        None
+        Vec::new()
     }
 }
 
@@ -2008,7 +2742,7 @@ mod tests {
         ));
 
         // Peer sends direct P2P audio (kind=6) -> keeps watchdog alive and does not crash.
-        let rtp = build_minimal_rtp(1, &[0xf8, 0xff, 0xfe]);
+        let rtp = build_minimal_rtp(1, 1, &[0xf8, 0xff, 0xfe]);
         let p2p_audio = ZRTPPacket::p2p_audio(0, 6001, rtp);
         peer_sock
             .send_to(&p2p_audio.encode(), engine_addr)
@@ -2232,6 +2966,9 @@ mod tests {
                 ip: relay_addr.ip().to_string(),
                 port: relay_addr.port(),
                 server_type: 0,
+                rtcp_addr: None,
+                rtp_ipv6: None,
+                rtcp_ipv6: None,
             }];
             g.session
                 .apply(CallEvent::StartOutgoing {
@@ -2345,6 +3082,9 @@ mod tests {
                 ip: relay_addr.ip().to_string(),
                 port: relay_addr.port(),
                 server_type: 0,
+                rtcp_addr: None,
+                rtp_ipv6: None,
+                rtcp_ipv6: None,
             }];
             g.session
                 .apply(CallEvent::StartOutgoing {
@@ -2463,5 +3203,126 @@ mod tests {
         .expect("watchdog must fire despite forged SRTP packets");
 
         assert!(engine.call_manager.srtp_drop_count() >= 1);
+    }
+
+    #[tokio::test]
+    async fn init_call_uses_32bit_media_uids_and_ignores_late_echo_replies() {
+        let relay_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_sock.local_addr().unwrap();
+        let observed_uids = Arc::new(StdMutex::new(None::<(u32, u32)>));
+        let observed_uids_clone = Arc::clone(&observed_uids);
+
+        let relay_task = tokio::spawn(async move {
+            let mut buf = [0u8; 512];
+            for _ in 0..4 {
+                if let Ok(Ok((n, from))) =
+                    tokio::time::timeout(Duration::from_secs(2), relay_sock.recv_from(&mut buf))
+                        .await
+                {
+                    if let Ok(ZRTPPacket::Control {
+                        cmd,
+                        seq,
+                        uid,
+                        body,
+                        ..
+                    }) = ZRTPPacket::decode(&buf[..n])
+                    {
+                        if cmd == ZrtpCmd::Echo as u16 {
+                            // First Echo reply triggers select_relay_with_echo, second Echo reply arrives
+                            // while start_media_loop is waiting for InitCallCaller response.
+                            let reply = ZRTPPacket::Control {
+                                is_reply: true,
+                                magic: 1,
+                                field02: 0,
+                                seq,
+                                uid,
+                                token: 0,
+                                cmd,
+                                sub_cmd: 0,
+                                body: ControlBody::Raw(vec![0xff, 0xff, 0xff, 0xff]),
+                            };
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                        } else if cmd == ZrtpCmd::InitCallCaller as u16 {
+                            if let ControlBody::InitCall { peer_uid, .. } = body {
+                                *observed_uids_clone.lock().unwrap() = Some((uid, peer_uid));
+                            }
+                            // Valid InitResponse: res=0, callId=7010, token=0xCAFE_BABE, publicAddr="203.0.113.9|49000"
+                            let mut resp_body = Vec::new();
+                            resp_body.extend_from_slice(&0i32.to_le_bytes());
+                            resp_body.extend_from_slice(&7010u32.to_le_bytes());
+                            resp_body.extend_from_slice(&0xCAFE_BABEu32.to_le_bytes());
+                            let pub_addr = b"203.0.113.9|49000";
+                            resp_body.extend_from_slice(&(pub_addr.len() as u16).to_le_bytes());
+                            resp_body.extend_from_slice(pub_addr);
+                            let reply = ZRTPPacket::Control {
+                                is_reply: true,
+                                magic: 1,
+                                field02: 0,
+                                seq,
+                                uid,
+                                token: 0xCAFE_BABE,
+                                cmd,
+                                sub_cmd: 2,
+                                body: ControlBody::Raw(resp_body),
+                            };
+                            let _ = relay_sock.send_to(&reply.encode(), from).await;
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+            Duration::from_millis(500),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        let start_effects = {
+            let mut g = engine.call_manager.state.lock().unwrap();
+            g.local_media_uid = Some(314_159_265);
+            g.peer_media_uid = Some(271_828_182);
+            g.relay_servers = vec![RelayServerAddr {
+                ip: relay_addr.ip().to_string(),
+                port: relay_addr.port(),
+                server_type: 1,
+                rtcp_addr: Some(format!("{}:{}", relay_addr.ip(), relay_addr.port())),
+                rtp_ipv6: None,
+                rtcp_ipv6: None,
+            }];
+            g.session
+                .apply(CallEvent::StartOutgoing {
+                    call_id: 7010,
+                    sess_id: "0123456789abcdef0123456789ABCDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        .to_string(),
+                    peer_id: "8491234567890123456".to_string(),
+                    srtp_mode: 1,
+                })
+                .unwrap()
+        };
+        engine.execute_call_effects(&s_snap, start_effects).await;
+
+        let _ = relay_task.await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
+
+        assert_eq!(
+            *observed_uids.lock().unwrap(),
+            Some((314_159_265, 271_828_182))
+        );
+        {
+            let g = engine.call_manager.state.lock().unwrap();
+            assert_eq!(g.public_p2p_addr.as_deref(), Some("203.0.113.9|49000"));
+            assert!(g.selected_relay.is_some());
+        }
+        engine.end_call().await.unwrap();
     }
 }

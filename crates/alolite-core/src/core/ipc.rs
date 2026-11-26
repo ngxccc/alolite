@@ -329,6 +329,12 @@ pub enum CoreEventDto {
         started_at_ms: Option<i64>,
         end_reason: Option<String>,
     },
+    CallAudioLevels {
+        mic_level: u8,
+        speaker_level: u8,
+        mic_gain_pct: u8,
+        speaker_gain_pct: u8,
+    },
 }
 
 impl From<CoreEvent> for CoreEventDto {
@@ -608,6 +614,17 @@ impl From<CoreEvent> for CoreEventDto {
                 is_held,
                 started_at_ms,
                 end_reason,
+            },
+            CoreEvent::CallAudioLevels {
+                mic_level,
+                speaker_level,
+                mic_gain_pct,
+                speaker_gain_pct,
+            } => Self::CallAudioLevels {
+                mic_level,
+                speaker_level,
+                mic_gain_pct,
+                speaker_gain_pct,
             },
         }
     }

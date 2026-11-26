@@ -3,6 +3,9 @@
 //! In Dev mode (`--dev`), logs raw decrypted payloads, endpoint metrics, and provides
 //! a diagnostic scanner. In Production mode, logs and dev panels are hidden and sanitized.
 
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -48,6 +51,43 @@ impl Default for LoggerState {
             entries: Vec::new(),
             max_entries: 500,
             counter: 0,
+        }
+    }
+}
+
+static CALL_LOG_FILE: LazyLock<Mutex<Option<File>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Enable persistent append-only call debug logging to `path`.
+pub fn enable_call_log(path: &Path) {
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    if let Ok(file) = opts.open(path) {
+        if let Ok(mut guard) = CALL_LOG_FILE.lock() {
+            *guard = Some(file);
+        }
+        call_debug("=== call-debug log session started ===");
+    }
+}
+
+/// Write one redacted diagnostic line to `call-debug.log` (when enabled) and stderr.
+pub fn call_debug(msg: &str) {
+    let now = crate::clock::unix_now();
+    let line = format!(
+        "[{:02}:{:02}:{:02}] {msg}",
+        (now / 3600) % 24,
+        (now / 60) % 60,
+        now % 60
+    );
+    eprintln!("{line}");
+    if let Ok(mut guard) = CALL_LOG_FILE.lock() {
+        if let Some(file) = guard.as_mut() {
+            let _ = writeln!(file, "{line}");
+            let _ = file.flush();
         }
     }
 }

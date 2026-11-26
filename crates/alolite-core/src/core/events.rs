@@ -246,4 +246,10 @@ pub enum CoreEvent {
         started_at_ms: Option<i64>,
         end_reason: Option<String>,
     },
+    CallAudioLevels {
+        mic_level: u8,
+        speaker_level: u8,
+        mic_gain_pct: u8,
+        speaker_gain_pct: u8,
+    },
 }
