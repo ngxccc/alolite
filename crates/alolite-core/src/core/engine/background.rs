@@ -250,13 +250,28 @@ impl CoreEngine {
         sync_ev: MobileSyncControlEvent,
     ) {
         match sync_ev {
-            MobileSyncControlEvent::TransferAfterLogin { temp_key } => {
-                set_latest_mobile_temp_key(&temp_key);
-                let known = load_threads_cache();
-                let engine = Arc::clone(self);
-                tokio::spawn(async move {
-                    engine.sync_phone_messages(known, false).await;
-                });
+            MobileSyncControlEvent::TransferAfterLogin { temp_key, imei } => {
+                let imei_matches = imei.as_deref().is_none_or(|v| v == s_snap.imei);
+                if imei_matches {
+                    set_latest_mobile_temp_key(&temp_key);
+                } else {
+                    eprintln!("[sync] ignored transfer_after_login for different device imei");
+                }
+            }
+            MobileSyncControlEvent::TransferError {
+                error_code,
+                error_msg,
+                ..
+            } => {
+                // Clear rejected temp_key so a subsequent retry does not keep reusing stale material.
+                set_latest_mobile_temp_key("");
+                let note = if error_msg.is_empty() {
+                    format!("Đồng bộ thất bại trên điện thoại (mã {error_code})")
+                } else {
+                    format!("Đồng bộ thất bại trên điện thoại ({error_code}): {error_msg}")
+                };
+                set_last_mobile_sync_status(Some(note.clone()));
+                self.emit(CoreEvent::StatusUpdate(note));
             }
             MobileSyncControlEvent::WaitingConfirmOnPhone { .. } => {
                 let note = "Đang chờ bạn bấm 'Đồng bộ' trên màn hình Zalo điện thoại…".to_string();
