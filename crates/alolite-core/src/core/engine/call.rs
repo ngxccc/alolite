@@ -326,10 +326,23 @@ impl CoreEngine {
 
         // INV-9: clone Session under a short lock and drop it before any network/media I/O.
         let s = self.session.lock().await.clone();
-        let resp = request_call(&s, &peer_id, 0, &ExtendData::default()).await?;
-        let call_id = resp
-            .call_id_u32()
-            .ok_or_else(|| anyhow::anyhow!("Thiếu callId từ máy chủ"))?;
+        let resp = match request_call(&s, &peer_id, 0, &ExtendData::default()).await {
+            Ok(r) => r,
+            Err(err) => {
+                crate::logger::log_error("call::signal", &format!("start_call failed: {err}"));
+                return Err(err);
+            }
+        };
+        let call_id = match resp.call_id_u32() {
+            Some(id) => id,
+            None => {
+                crate::logger::log_error(
+                    "call::signal",
+                    "start_call response missing numeric callId",
+                );
+                bail!("Thiếu callId từ máy chủ");
+            }
+        };
         let sess_id = resp
             .sess_id_str()
             .unwrap_or_else(|| format!("sess-{call_id}"));
