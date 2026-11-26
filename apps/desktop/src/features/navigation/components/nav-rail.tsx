@@ -248,8 +248,6 @@ export function NavRail() {
               size={40}
               mediaCache={mediaCache}
             />
-            {/* Online status dot */}
-            <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full bg-online ring-2 ring-rail" />
           </TooltipTrigger>
           <TooltipContent side="right">{displayName || "Tài khoản"}</TooltipContent>
         </Tooltip>

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import {
+  advanceUnreadSeenFromMessages,
   mergeThreadInto,
   reconcileSentMessage,
   sortThreads,
@@ -150,8 +151,7 @@ export const useChatStore = create<ChatStoreState>()(
           state.unreadCounts[threadId] = 0;
           const target = state.threads.find((t) => t.id === threadId);
           if (target) {
-            target.unread.unread_ids = [];
-            target.unread.marked_unread = false;
+            advanceUnreadSeenFromMessages(target);
           }
         }
       }),
@@ -253,8 +253,7 @@ export const useChatStore = create<ChatStoreState>()(
         state.unreadCounts[threadId] = 0;
         const target = state.threads.find((t) => t.id === threadId);
         if (target) {
-          target.unread.unread_ids = [];
-          target.unread.marked_unread = false;
+          advanceUnreadSeenFromMessages(target);
         }
       }),
 
@@ -290,20 +289,24 @@ export const useChatStore = create<ChatStoreState>()(
           if (!incoming.id || incoming.id === "0") continue;
           const existing = byId.get(incoming.id);
           if (existing) {
-            const oldLen = existing.messages.length;
             const merged = mergeThreadInto(existing, incoming);
-            byId.set(incoming.id, merged);
-            const added = merged.messages.length - oldLen;
-            if (added > 0) {
-              const newIncoming = merged.messages
-                .slice(-added)
-                .filter((m) => !m.is_outgoing).length;
-              if (newIncoming > 0 && incoming.id !== state.selectedThreadId) {
-                state.unreadCounts[incoming.id] =
-                  (state.unreadCounts[incoming.id] ?? 0) + newIncoming;
-              }
+            if (incoming.id === state.selectedThreadId) {
+              merged.unread.unread_ids = [];
+              merged.unread.marked_unread = false;
+              state.unreadCounts[incoming.id] = 0;
+            } else {
+              state.unreadCounts[incoming.id] = merged.unread.unread_ids.length;
             }
+            byId.set(incoming.id, merged);
           } else {
+            if (incoming.id === state.selectedThreadId) {
+              incoming.unread.unread_ids = [];
+              incoming.unread.mention_ids = [];
+              incoming.unread.marked_unread = false;
+              state.unreadCounts[incoming.id] = 0;
+            } else {
+              state.unreadCounts[incoming.id] = incoming.unread.unread_ids.length;
+            }
             byId.set(incoming.id, incoming);
           }
         }

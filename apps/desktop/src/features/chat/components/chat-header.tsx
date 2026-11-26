@@ -3,7 +3,6 @@ import type { Thread } from "@/shared/types/ipc.generated";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Button } from "@/shared/ui/button";
 import { cn } from "cn";
-import { threadMemberCount } from "@/features/threads/utils/threads";
 import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
 import { InChatSearch } from "./in-chat-search";
 
@@ -32,7 +31,6 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
           name={thread.name}
           avatarUrl={thread.avatar}
           isGroup={thread.is_group}
-          memberCount={thread.is_group ? threadMemberCount(thread) : undefined}
           size={38}
           mediaCache={mediaCache}
         />

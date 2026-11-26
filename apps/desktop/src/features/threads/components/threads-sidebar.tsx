@@ -220,9 +220,13 @@ export function ThreadsSidebar() {
                   onClick={() => {
                     for (const t of threads) {
                       const unread = threadUnreadCount(t, unreadCounts);
-                      if (unread > 0) {
-                        const last = t.messages.at(-1);
-                        if (last?.id) void ipc.sendSeen(t.id, t.is_group, last.id);
+                      if (unread > 0 || t.unread.marked_unread) {
+                        useChatStore.getState().markThreadRead(t.id);
+                        const newestNumeric =
+                          t.messages.toReversed().find((m) => /^\d+$/.test(m.id))?.id ??
+                          t.messages.at(-1)?.id ??
+                          "";
+                        void ipc.sendSeen(t.id, t.is_group, newestNumeric);
                       }
                     }
                   }}
@@ -346,10 +350,16 @@ export function ThreadsSidebar() {
                         onClick={() => {
                           setActiveSection("chat");
                           setInChatSearchOpen(false);
+                          const hadUnread =
+                            threadUnreadCount(t, unreadCounts) > 0 || t.unread.marked_unread;
                           selectThread(t.id);
                           const last = t.messages.at(-1);
-                          if (last && !last.is_outgoing && last.id) {
-                            void ipc.sendSeen(t.id, t.is_group, last.id);
+                          const newestNumeric =
+                            t.messages.toReversed().find((m) => /^\d+$/.test(m.id))?.id ??
+                            last?.id ??
+                            "";
+                          if (hadUnread || (last && !last.is_outgoing && newestNumeric)) {
+                            void ipc.sendSeen(t.id, t.is_group, newestNumeric);
                           }
                         }}
                         className={cn(
