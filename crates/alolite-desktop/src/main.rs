@@ -17,8 +17,9 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let data_path = data_dir::initialize(&args)?;
     let call_log_path = data_path.join("call-debug.log");
-    logger::enable_call_log(&call_log_path);
-    eprintln!("[alolite] call debug log: {}", call_log_path.display());
+    if logger::enable_call_log_from_env(&call_log_path) {
+        eprintln!("[alolite] call debug log: {}", call_log_path.display());
+    }
 
     let dev_mode = args
         .iter()

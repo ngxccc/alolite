@@ -1276,7 +1276,7 @@ impl CoreEngine {
                     tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await
                 {
                     let decoded = ZRTPPacket::decode(&buf[..n]);
-                    eprintln!(
+                    crate::logger::call_debug(&format!(
                         "[DEBUG-call] init_rx n={n} decoded_ok={} pkt={:?}",
                         decoded.is_ok(),
                         decoded.as_ref().ok().map(|p| match p {
@@ -1288,7 +1288,7 @@ impl CoreEngine {
                             } => format!("Control(reply={is_reply},cmd={cmd},sub={sub_cmd})"),
                             _ => "Other".to_string(),
                         })
-                    );
+                    ));
                     if let Ok(ZRTPPacket::Control {
                         is_reply: true,
                         cmd,
@@ -1335,11 +1335,11 @@ impl CoreEngine {
                             }
                             zrtp_ready = true;
                         } else {
-                            eprintln!(
+                            crate::logger::call_debug(&format!(
                                 "[DEBUG-call] init_resp_non_zero len={} prefix={:02x?}",
                                 bytes.len(),
                                 &bytes[..bytes.len().min(8)]
-                            );
+                            ));
                             crate::logger::log_error(
                                 "call::zrtp",
                                 "InitResponse returned non-zero status",

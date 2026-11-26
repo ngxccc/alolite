@@ -168,7 +168,7 @@ stateDiagram-v2
 
 ## Audio Diagnostics & Debugging
 
-- **Persistent Call Telemetry (`call-debug.log`)**: Enabled by `crates/alolite-desktop/src/main.rs` via `logger::enable_call_log(&data_dir.join("call-debug.log"))`. Logs redacted per-second counters (`media_stats`, `capture_stats`, `playout_stats`, `first_tx_rtp`, `capture_open`/`playback_open`, `apm_delay_ms`) with zero secrets or credentials (`INV-8`).
+- **Persistent Call Telemetry (`ALOLITE_CALL_DEBUG`)**: Disabled by default. Enable with `ALOLITE_CALL_DEBUG=1` (also auto-enabled when `ALOLITE_CALL_DUMP_WAV` is set) to stream redacted `[DEBUG-call]` diagnostics to stderr and `<data_dir>/call-debug.log` via `logger::enable_call_log_from_env` (`media_stats`, `capture_stats`, `playout_stats`, `first_tx_rtp`, `capture_open`/`playback_open`, `apm_delay_ms`), with zero secrets or credentials (`INV-8`).
 - **3-Channel WAV Dump (`ALOLITE_CALL_DUMP_WAV`)**: Disabled by default (`crates/alolite-core/src/services/call_media/wav_dump.rs`). Enable only for local AEC/NS/AGC DSP inspection:
   - Set `ALOLITE_CALL_DUMP_WAV=1` (writes `<data_dir>/call-dump-<call_id>.wav`, e.g. `~/.local/share/alolite/call-dump-<call_id>.wav`) or `ALOLITE_CALL_DUMP_WAV=/custom/dir`.
   - Format: `16000 Hz`, `16-bit` signed PCM, `3` interleaved channels (`ch0 = mic_raw` pre-APM, `ch1 = mic_proc` post-APM/AGC, `ch2 = speaker_render` playout & AEC reference).
