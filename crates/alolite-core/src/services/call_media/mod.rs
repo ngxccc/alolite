@@ -26,7 +26,10 @@ pub const PLAYBACK_TLENGTH_BYTES: u32 = 1_920;
 
 #[cfg(all(feature = "call", target_os = "linux"))]
 pub use audio_backend::PulseAudioBackend;
-pub use audio_backend::{AudioBackend, NullAudioBackend};
+pub use audio_backend::{
+    list_audio_devices, normalize_device_id, AudioBackend, AudioDeviceInfo, AudioDeviceKind,
+    AudioDeviceList, NullAudioBackend,
+};
 pub use neteq::{NetEq, NetEqConfig, PopOutcome};
 #[cfg(feature = "call")]
 pub use opus_codec::{LibOpusDecoder, LibOpusEncoder};

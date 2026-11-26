@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   AccountProfile,
   AppSettings,
+  AudioDeviceList,
   AutoReplyRule,
   ChatMessage,
   CoreBootstrapSnapshot,
@@ -167,6 +168,9 @@ export const ipc = {
   endCall: () => call<void>("end_call"),
   setCallMuted: (muted: boolean) => call<void>("set_call_muted", { muted }),
   setCallHeld: (held: boolean) => call<void>("set_call_held", { held }),
+  listAudioDevices: () => call<AudioDeviceList>("list_audio_devices"),
+  setCallDevices: (micId: string | null, speakerId: string | null) =>
+    call<void>("set_call_devices", { micId, speakerId }),
 
   async openExternalUrl(url: string): Promise<void> {
     if (isTauriRuntime()) {

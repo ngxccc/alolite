@@ -1,7 +1,25 @@
 import { useEffect, useState } from "react";
-import { Mic, MicOff, PhoneCall, PhoneOff } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  Pause,
+  PhoneCall,
+  PhoneOff,
+  Play,
+  SlidersHorizontal,
+  Volume2,
+} from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
+import type { AudioDeviceList, CallPhase } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/shared/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { useCallStore, useMediaCacheStore, useUIStore } from "@/stores";
 
@@ -12,17 +30,40 @@ export function formatCallDuration(totalSeconds: number): string {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+export function getCallStatusText(phase: CallPhase, elapsedSecs: number, isHeld: boolean): string {
+  if (phase === "outgoing_ringing") {
+    return "Đang đổ chuông…";
+  }
+  if (phase === "connecting") {
+    return "Đang kết nối…";
+  }
+  if (phase === "ending") {
+    return "Đang kết thúc…";
+  }
+  if (phase === "active" && isHeld) {
+    return "Đang tạm giữ";
+  }
+  return formatCallDuration(elapsedSecs);
+}
+
 export function ActiveCallBar() {
   const phase = useCallStore((s) => s.phase);
   const peerId = useCallStore((s) => s.peerId);
   const peerName = useCallStore((s) => s.peerName);
   const peerAvatar = useCallStore((s) => s.peerAvatar);
   const isMuted = useCallStore((s) => s.isMuted);
+  const isHeld = useCallStore((s) => s.isHeld);
   const startedAtMs = useCallStore((s) => s.startedAtMs);
+  const selectedMicId = useCallStore((s) => s.selectedMicId);
+  const selectedSpeakerId = useCallStore((s) => s.selectedSpeakerId);
+  const setSelectedDevices = useCallStore((s) => s.setSelectedDevices);
   const mediaCache = useMediaCacheStore((s) => s.mediaCache);
   const showToast = useUIStore((s) => s.showToast);
 
   const [elapsedSecs, setElapsedSecs] = useState(0);
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [devices, setDevices] = useState<AudioDeviceList>({ inputs: [], outputs: [] });
 
   useEffect(() => {
     if (phase !== "active" || startedAtMs == null) {
@@ -42,20 +83,57 @@ export function ActiveCallBar() {
   }
 
   const displayName = peerName || peerId || "Người dùng Zalo";
-  const statusText =
-    phase === "outgoing_ringing"
-      ? "Đang đổ chuông…"
-      : phase === "connecting"
-        ? "Đang kết nối…"
-        : phase === "ending"
-          ? "Đang kết thúc…"
-          : formatCallDuration(elapsedSecs);
+  const statusText = getCallStatusText(phase, elapsedSecs, isHeld);
 
   const handleToggleMute = async () => {
     try {
       await ipc.setCallMuted(!isMuted);
     } catch (err) {
       showToast(`Không thể đổi trạng thái mic: ${String(err)}`, "error");
+    }
+  };
+
+  const handleToggleHold = async () => {
+    try {
+      await ipc.setCallHeld(!isHeld);
+    } catch (err) {
+      showToast(`Không thể đổi trạng thái tạm giữ: ${String(err)}`, "error");
+    }
+  };
+
+  const handleDevicesPopoverChange = async (open: boolean) => {
+    setDevicesOpen(open);
+    if (!open) {
+      return;
+    }
+    setLoadingDevices(true);
+    try {
+      const list = await ipc.listAudioDevices();
+      setDevices(list);
+    } catch (err) {
+      showToast(`Không thể tải danh sách thiết bị âm thanh: ${String(err)}`, "error");
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
+
+  const handleMicChange = async (micId: string | null) => {
+    const nextMic = micId ?? null;
+    setSelectedDevices(nextMic, selectedSpeakerId);
+    try {
+      await ipc.setCallDevices(nextMic, selectedSpeakerId);
+    } catch (err) {
+      showToast(`Không thể đổi micro: ${String(err)}`, "error");
+    }
+  };
+
+  const handleSpeakerChange = async (speakerId: string | null) => {
+    const nextSpeaker = speakerId ?? null;
+    setSelectedDevices(selectedMicId, nextSpeaker);
+    try {
+      await ipc.setCallDevices(selectedMicId, nextSpeaker);
+    } catch (err) {
+      showToast(`Không thể đổi loa: ${String(err)}`, "error");
     }
   };
 
@@ -66,6 +144,17 @@ export function ActiveCallBar() {
       showToast(`Không thể kết thúc cuộc gọi: ${String(err)}`, "error");
     }
   };
+
+  const activeMicValue =
+    selectedMicId ??
+    devices.inputs.find((d) => d.is_default)?.id ??
+    devices.inputs[0]?.id ??
+    "default";
+  const activeSpeakerValue =
+    selectedSpeakerId ??
+    devices.outputs.find((d) => d.is_default)?.id ??
+    devices.outputs[0]?.id ??
+    "default";
 
   return (
     <div
@@ -86,7 +175,11 @@ export function ActiveCallBar() {
           <div className="max-w-44 truncate text-xs font-semibold text-foreground">
             {displayName}
           </div>
-          <div className="flex items-center gap-1 text-[11px] font-medium text-online tabular-nums">
+          <div
+            className={`flex items-center gap-1 text-[11px] font-medium tabular-nums ${
+              isHeld ? "text-warning" : "text-online"
+            }`}
+          >
             <PhoneCall className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span>{statusText}</span>
           </div>
@@ -102,7 +195,7 @@ export function ActiveCallBar() {
           aria-pressed={isMuted}
           title={isMuted ? "Bật mic" : "Tắt mic"}
           className="h-8 w-8"
-          disabled={phase !== "active"}
+          disabled={phase !== "active" && phase !== "connecting"}
           onClick={() => void handleToggleMute()}
         >
           {isMuted ? (
@@ -111,6 +204,92 @@ export function ActiveCallBar() {
             <Mic className="h-4 w-4" aria-hidden="true" />
           )}
         </Button>
+
+        <Button
+          type="button"
+          variant={isHeld ? "secondary" : "ghost"}
+          size="icon"
+          aria-label={isHeld ? "Tiếp tục cuộc gọi" : "Tạm giữ cuộc gọi"}
+          aria-pressed={isHeld}
+          title={isHeld ? "Tiếp tục cuộc gọi" : "Tạm giữ cuộc gọi"}
+          className="h-8 w-8"
+          disabled={phase !== "active"}
+          onClick={() => void handleToggleHold()}
+        >
+          {isHeld ? (
+            <Play className="h-4 w-4 text-warning" aria-hidden="true" />
+          ) : (
+            <Pause className="h-4 w-4" aria-hidden="true" />
+          )}
+        </Button>
+
+        <Popover open={devicesOpen} onOpenChange={(open) => void handleDevicesPopoverChange(open)}>
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Chọn thiết bị âm thanh"
+                title="Thiết bị âm thanh"
+                className="h-8 w-8"
+              />
+            }
+          >
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 gap-3 p-3">
+            <PopoverHeader>
+              <PopoverTitle className="text-xs font-semibold">Thiết bị âm thanh</PopoverTitle>
+            </PopoverHeader>
+            {loadingDevices ? (
+              <p className="text-xs text-muted-foreground">Đang tải thiết bị…</p>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                <div className="flex flex-col gap-1">
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                    <Mic className="h-3 w-3" aria-hidden="true" />
+                    Micro
+                  </span>
+                  <Select value={activeMicValue} onValueChange={(val) => void handleMicChange(val)}>
+                    <SelectTrigger size="sm" className="w-full" aria-label="Chọn micro">
+                      <SelectValue placeholder="Micro mặc định" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {devices.inputs.map((dev) => (
+                        <SelectItem key={dev.id} value={dev.id}>
+                          {dev.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                    <Volume2 className="h-3 w-3" aria-hidden="true" />
+                    Loa
+                  </span>
+                  <Select
+                    value={activeSpeakerValue}
+                    onValueChange={(val) => void handleSpeakerChange(val)}
+                  >
+                    <SelectTrigger size="sm" className="w-full" aria-label="Chọn loa">
+                      <SelectValue placeholder="Loa mặc định" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {devices.outputs.map((dev) => (
+                        <SelectItem key={dev.id} value={dev.id}>
+                          {dev.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
 
         <Button
           type="button"
