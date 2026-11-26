@@ -86,13 +86,13 @@ export function SettingsModal() {
 
   return (
     <Dialog open={settingsOpen} onOpenChange={(open) => !open && setSettingsOpen(false)}>
-      {/* 653x652 dialog, radius-lg (8px), no default padding */}
+      {/* Responsive settings dialog with bounded viewport sizing */}
       <DialogContent
-        className="flex h-163 w-163.25 max-w-163.25 flex-row gap-0 overflow-hidden rounded-lg p-0"
+        className="flex h-[min(42rem,calc(100vh-2rem))] w-[min(46rem,calc(100vw-2rem))] max-w-[min(46rem,calc(100vw-2rem))] flex-row gap-0 overflow-hidden rounded-lg p-0"
         showCloseButton={false}
       >
-        {/* ── Left nav 186px ── */}
-        <nav className="flex w-46.5 shrink-0 flex-col gap-0.5 overflow-y-auto bg-card px-2 py-4">
+        {/* ── Left nav ── */}
+        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto bg-card px-2 py-4 sm:w-48">
           <DialogTitle className="mb-2 px-2 text-lg font-medium text-foreground">
             Cài đặt
           </DialogTitle>
