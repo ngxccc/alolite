@@ -686,7 +686,14 @@ pub async fn request_call(
     extend_data: &ExtendData,
 ) -> Result<CallSignalWireData> {
     let params = build_request_call_params(callee_id, call_type, extend_data)?;
-    get_voicecall(session, voice_call::REQUEST_CALL, params, true).await
+    let client_call_id = params.get("callId").and_then(Value::as_u64);
+    let mut wire = get_voicecall(session, voice_call::REQUEST_CALL, params, true).await?;
+    if wire.call_id_u32().is_none() {
+        if let Some(cid) = client_call_id {
+            wire.call_id = Some(Value::from(cid));
+        }
+    }
+    Ok(wire)
 }
 
 /// Send `11301` `/api/voicecall/request` after ZRTP initialization.
