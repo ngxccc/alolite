@@ -32,7 +32,7 @@ export function DevToolsModal() {
 
   return (
     <Dialog open={devToolsOpen} onOpenChange={(open) => !open && setDevToolsOpen(false)}>
-      <DialogContent className="h-[560px] max-w-4xl">
+      <DialogContent className="h-140 max-w-4xl">
         <DialogHeader className="pr-10">
           <DialogTitle>
             <Bug className="h-4 w-4 text-primary" /> Công cụ kiểm tra & Chẩn đoán giao thức
@@ -60,12 +60,13 @@ export function DevToolsModal() {
           <TabsContent value="logs" className="flex min-h-0 flex-1 gap-3 overflow-hidden">
             <div className="flex w-80 flex-col gap-1 overflow-y-auto border-r border-border pr-2">
               {(diag?.logs ?? []).toReversed().map((e) => (
-                <button
+                <Button
                   key={e.id}
                   type="button"
+                  variant="ghost"
                   onClick={() => setSelectedLog(e)}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs",
+                    "flex h-auto w-full cursor-pointer items-center justify-start gap-2 rounded-md px-2.5 py-1.5 text-left text-xs",
                     selectedLog?.id === e.id
                       ? "bg-accent text-accent-foreground"
                       : "hover:bg-muted",
@@ -76,7 +77,7 @@ export function DevToolsModal() {
                     {e.method} {e.url}
                   </span>
                   <span className="text-xs text-muted-foreground">{e.latency_ms}ms</span>
-                </button>
+                </Button>
               ))}
             </div>
 

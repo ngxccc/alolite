@@ -107,7 +107,7 @@ export function LoginView() {
   return (
     <TooltipProvider delay={250}>
       <div className="flex h-full min-h-screen w-full items-center justify-center bg-canvas p-6 selection:bg-primary/20">
-        <div className="flex w-full max-w-[440px] flex-col gap-5 rounded-2xl border border-border/80 bg-card/95 p-7 text-card-foreground shadow-2xl backdrop-blur-md">
+        <div className="flex w-full max-w-110 flex-col gap-5 rounded-2xl border border-border/80 bg-card/95 p-7 text-card-foreground shadow-2xl backdrop-blur-md">
           {/* ── Header ── */}
           <div className="flex items-center justify-between border-b border-border/60 pb-4">
             <div className="flex items-center gap-3">
@@ -160,7 +160,7 @@ export function LoginView() {
             {/* ── QR Login Tab ── */}
             <TabsContent value="qr" className="m-0 flex flex-col items-center gap-3">
               {/* Soft Elevated White Plate */}
-              <div className="relative flex h-[240px] w-[240px] items-center justify-center overflow-hidden rounded-2xl border border-black/10 bg-white p-3 shadow-md">
+              <div className="relative flex h-60 w-60 items-center justify-center overflow-hidden rounded-2xl border border-black/10 bg-white p-3 shadow-md">
                 {/* State A: Phone scanned, awaiting mobile confirmation */}
                 {qrScannedName ? (
                   <div className="flex animate-in flex-col items-center justify-center gap-2.5 p-2 text-center duration-200 zoom-in-95 fade-in">
@@ -181,7 +181,7 @@ export function LoginView() {
                       </span>
                     </div>
                     <div>
-                      <div className="max-w-[170px] truncate text-xs font-bold text-slate-800">
+                      <div className="max-w-42.5 truncate text-xs font-bold text-slate-800">
                         {qrScannedName}
                       </div>
                       <div className="mt-0.5 text-xs font-medium text-online">
@@ -387,13 +387,14 @@ export function LoginView() {
               <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                 Tài khoản đã lưu trên máy
               </div>
-              <div className="flex max-h-[150px] flex-col gap-2 overflow-y-auto pr-0.5">
+              <div className="flex max-h-37.5 flex-col gap-2 overflow-y-auto pr-0.5">
                 {savedAccounts.map((acc) => (
-                  <button
+                  <Button
                     key={acc.uin}
                     type="button"
+                    variant="ghost"
                     onClick={() => void ipc.switchAccount(acc.uin)}
-                    className="group flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/50 bg-secondary/40 p-2.5 text-left transition hover:border-primary/50 hover:bg-accent/40 focus:ring-2 focus:ring-ring focus:outline-none"
+                    className="group flex h-auto w-full cursor-pointer items-center justify-between rounded-xl border border-border/50 bg-secondary/40 p-2.5 text-left transition hover:border-primary/50 hover:bg-accent/40 focus:ring-2 focus:ring-ring focus:outline-none"
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <UserAvatar
@@ -415,7 +416,7 @@ export function LoginView() {
                     <Badge variant="outline" className="text-xs opacity-70 group-hover:opacity-100">
                       Chuyển
                     </Badge>
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>

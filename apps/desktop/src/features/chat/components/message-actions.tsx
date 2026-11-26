@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CornerUpLeft, Forward, RotateCcw, SmilePlus, Star, Trash2, Undo2 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import type { ChatMessage, Thread } from "@/shared/types/ipc.generated";
+import { Button } from "@/shared/ui/button";
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -35,22 +36,26 @@ export function MessageContextMenu({ msg, thread, onSelectReaction }: MessageCon
   const categoryEmojis = EMOJI_CATEGORIES[category] ?? [];
 
   return (
-    <ContextMenuContent className={showAllEmojis ? "w-[300px]" : undefined}>
+    <ContextMenuContent className={showAllEmojis ? "w-75" : undefined}>
       {!showAllEmojis ? (
         <div className="flex items-center gap-1 px-1.5 py-1">
           {REACTION_LIST.map((r) => (
-            <button
+            <Button
               key={r.key}
               type="button"
+              variant="ghost"
+              size="icon-sm"
               title={r.label}
               onClick={() => onSelectReaction(r.emoji)}
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-transform hover:scale-120 hover:bg-accent"
             >
               <ReactionBadge raw={r.emoji} />
-            </button>
+            </Button>
           ))}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             title="Thêm biểu tượng cảm xúc"
             onClick={(e) => {
               e.preventDefault();
@@ -60,14 +65,16 @@ export function MessageContextMenu({ msg, thread, onSelectReaction }: MessageCon
             className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <SmilePlus className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="space-y-2 p-2">
           <div className="flex items-center justify-between border-b border-border pb-1 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Ghim & Phổ biến</span>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               title="Thu gọn"
               onClick={(e) => {
                 e.preventDefault();
@@ -77,25 +84,29 @@ export function MessageContextMenu({ msg, thread, onSelectReaction }: MessageCon
               className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <Undo2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
           <div className="flex flex-wrap gap-1">
             {PINNED_REACTIONS.map((em) => (
-              <button
+              <Button
                 key={`pin_${em}`}
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 onClick={() => onSelectReaction(em)}
                 className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-base transition-transform hover:scale-120 hover:bg-accent"
               >
                 {em}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="no-scrollbar flex items-center gap-0.5 overflow-x-auto border-t border-border pt-1">
             {Object.keys(EMOJI_CATEGORIES).map((catName) => (
-              <button
+              <Button
                 key={catName}
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 title={catName}
                 onClick={(e) => {
                   e.preventDefault();
@@ -110,19 +121,21 @@ export function MessageContextMenu({ msg, thread, onSelectReaction }: MessageCon
                 )}
               >
                 {CATEGORY_ICONS[catName] ?? "😀"}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="grid max-h-44 grid-cols-8 gap-1 overflow-y-auto pr-1">
             {categoryEmojis.map((em, idx) => (
-              <button
+              <Button
                 key={`${category}_${em}_${idx}`}
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 onClick={() => onSelectReaction(em)}
                 className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-base transition-transform hover:scale-120 hover:bg-accent"
               >
                 {em}
-              </button>
+              </Button>
             ))}
           </div>
         </div>

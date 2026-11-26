@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Forward, Search } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
+import { Button } from "@/shared/ui/button";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
@@ -47,15 +48,16 @@ export function ForwardModal() {
 
           <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
             {candidates.map((t) => (
-              <button
+              <Button
                 key={t.id}
                 type="button"
+                variant="ghost"
                 onClick={() => {
                   void ipc.forwardMessage(t.id, t.is_group, forwardMsg);
                   setForwardMsg(null);
                   showToast(`Đang chuyển tiếp tới ${t.name}`);
                 }}
-                className="flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium transition hover:bg-accent hover:text-accent-foreground"
+                className="flex h-auto cursor-pointer items-center justify-start gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium transition hover:bg-accent hover:text-accent-foreground"
               >
                 <UserAvatar
                   id={t.id}
@@ -66,7 +68,7 @@ export function ForwardModal() {
                   mediaCache={mediaCache}
                 />
                 <span className="truncate">{t.is_group ? `[Nhóm] ${t.name}` : t.name}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </div>

@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import {
   ContextMenu,
@@ -155,7 +157,7 @@ export function ThreadsSidebar() {
   return (
     <section
       aria-label="Danh sách hội thoại"
-      className="flex h-full w-[300px] shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
+      className="flex h-full w-75 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
     >
       <header className="flex shrink-0 flex-col gap-3 border-b border-border p-3">
         <div className="flex items-center justify-between gap-2">
@@ -164,8 +166,10 @@ export function ThreadsSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <button
+                  <Button
                     type="button"
+                    variant={threadFilter !== "all" ? "secondary" : "ghost"}
+                    size="icon"
                     title={
                       threadFilter === "direct"
                         ? "Đang lọc: Cá nhân"
@@ -176,8 +180,8 @@ export function ThreadsSidebar() {
                     className={cn(
                       "inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors",
                       threadFilter !== "all"
-                        ? "border border-border bg-secondary text-foreground"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                        ? "border border-border text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
                     )}
                   />
                 }
@@ -200,8 +204,10 @@ export function ThreadsSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon"
                     title="Tùy chọn khác"
                     className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   />
@@ -226,22 +232,26 @@ export function ThreadsSidebar() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <button
+            <Button
               type="button"
+              variant="outline"
               aria-label="Tạo hội thoại hoặc tìm số điện thoại"
               onClick={() => setPhoneLookupOpen(true)}
               className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
             >
               <SquarePen className="h-3.5 w-3.5" />
               <span>Mới</span>
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Command Search Input */}
-        <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 focus-within:ring-1 focus-within:ring-ring">
+        <div
+          onClick={() => searchInputRef.current?.focus()}
+          className="flex h-9 cursor-text items-center gap-2 rounded-md border border-input bg-background px-3 focus-within:ring-1 focus-within:ring-ring"
+        >
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <input
+          <Input
             ref={searchInputRef}
             type="text"
             value={searchQuery}
@@ -255,50 +265,54 @@ export function ThreadsSidebar() {
               handleSearchKeyDown(e.key);
             }}
             placeholder="Tìm hội thoại..."
-            className="w-full border-none bg-transparent p-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            className="h-auto w-full border-0 bg-transparent p-0 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 dark:bg-transparent"
           />
           {searchQuery ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setSearchQuery("")}
               title="Xóa tìm kiếm"
-              className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground"
+              className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center p-0 text-muted-foreground hover:text-foreground"
             >
               <X className="h-3 w-3" />
-            </button>
+            </Button>
           ) : (
             <kbd className="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
               {shortcutLabel}
             </kbd>
           )}
-        </label>
+        </div>
 
         {/* Segmented TabsList */}
         <div className="grid grid-cols-2 rounded-md bg-muted p-1 text-muted-foreground">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => setUnreadOnly(false)}
             className={cn(
-              "cursor-pointer rounded-sm py-1 text-xs font-medium transition-colors",
+              "h-auto cursor-pointer rounded-sm py-1 text-xs font-medium transition-colors",
               !unreadOnly
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
+                : "text-muted-foreground hover:bg-transparent hover:text-foreground",
             )}
           >
             Tất cả
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => setUnreadOnly(true)}
             className={cn(
-              "cursor-pointer rounded-sm py-1 text-xs font-medium tabular-nums transition-colors",
+              "h-auto cursor-pointer rounded-sm py-1 text-xs font-medium tabular-nums transition-colors",
               unreadOnly
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
+                : "text-muted-foreground hover:bg-transparent hover:text-foreground",
             )}
           >
             {totalUnread > 0 ? `Chưa đọc (${totalUnread > 99 ? "99+" : totalUnread})` : "Chưa đọc"}
-          </button>
+          </Button>
         </div>
       </header>
 

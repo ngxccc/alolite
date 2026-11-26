@@ -1,26 +1,20 @@
 import { useState } from "react";
 import {
-  Briefcase,
   Bug,
-  CircleHelp,
   Cloud,
   Database,
   FolderOpen,
-  Globe,
   LogOut,
-  Megaphone,
   MessageSquare,
   Moon,
-  Package,
   Settings,
   Smartphone,
-  Star,
   Sun,
   User,
   Users,
-  Zap,
 } from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +25,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { cn } from "cn";
@@ -58,8 +51,10 @@ function RailBtn({
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
+          <Button
             type="button"
+            variant={active ? "default" : "ghost"}
+            size="icon"
             onClick={onClick}
             aria-label={label}
             aria-current={active ? "page" : undefined}
@@ -112,8 +107,10 @@ function SettingsMenu({ isDark }: { isDark: boolean }) {
           render={
             <DropdownMenuTrigger
               render={
-                <button
+                <Button
                   type="button"
+                  variant={open ? "default" : "ghost"}
+                  size="icon"
                   aria-label="Cài đặt"
                   className={cn(
                     "relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 select-none focus-visible:outline-none",
@@ -130,7 +127,7 @@ function SettingsMenu({ isDark }: { isDark: boolean }) {
         </TooltipTrigger>
         <TooltipContent side="right">Cài đặt</TooltipContent>
       </Tooltip>
-      <DropdownMenuContent side="right" align="end" sideOffset={8} className="min-w-[196px]">
+      <DropdownMenuContent side="right" align="end" sideOffset={8} className="min-w-49">
         {/* Account information */}
         <DropdownMenuItem onClick={() => setSettingsOpen(true, "account")}>
           <User className="h-4 w-4 shrink-0 opacity-70" />
@@ -159,28 +156,6 @@ function SettingsMenu({ isDark }: { isDark: boolean }) {
               <Smartphone className="h-4 w-4 shrink-0 opacity-60" />
               Đồng bộ tin nhắn từ điện thoại
             </DropdownMenuItem>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-
-        {/* Language sub-menu */}
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Globe className="h-4 w-4 shrink-0 opacity-70" />
-            Ngôn ngữ
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent sideOffset={4}>
-            <DropdownMenuItem disabled>Tiếng Việt (mặc định)</DropdownMenuItem>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-
-        {/* Help sub-menu */}
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <CircleHelp className="h-4 w-4 shrink-0 opacity-70" />
-            Hỗ trợ
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent sideOffset={4}>
-            <DropdownMenuItem disabled>Trung tâm hỗ trợ</DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSeparator />
@@ -212,142 +187,6 @@ function SettingsMenu({ isDark }: { isDark: boolean }) {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-// ─── zBusiness Tools popover ──────────────────────────────────────────────────
-
-interface ToolItemDef {
-  icon: React.ComponentType<{ className?: string }>;
-  iconBg: string;
-  label: string;
-  badge?: "BASIC" | "PRO";
-  disabled?: boolean;
-  onSelect?: () => void;
-}
-
-function ToolItemBtn({ item }: { item: ToolItemDef }) {
-  const Icon = item.icon;
-  return (
-    <button
-      type="button"
-      disabled={item.disabled}
-      onClick={item.onSelect}
-      className={cn(
-        "flex flex-col items-center gap-1.5 rounded-lg p-2.5 text-center transition-colors",
-        item.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-accent",
-      )}
-    >
-      <div
-        className={cn(
-          "relative flex h-10 w-10 items-center justify-center rounded-full",
-          item.iconBg,
-        )}
-      >
-        <Icon className="h-5 w-5 text-white" />
-        {item.badge && (
-          <span
-            className={cn(
-              "absolute -top-1 -right-1 rounded-full px-1 py-0.5 text-xs leading-none font-bold text-white",
-              item.badge === "BASIC" ? "bg-sky-500" : "bg-orange-500",
-            )}
-          >
-            {item.badge}
-          </span>
-        )}
-      </div>
-      <span className="w-full text-xs leading-tight text-popover-foreground">{item.label}</span>
-    </button>
-  );
-}
-
-function ToolsPopover() {
-  const [open, setOpen] = useState(false);
-  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
-  const setActiveSection = useUIStore((s) => s.setActiveSection);
-  const toggleFilterStarredOnly = useChatStore((s) => s.toggleFilterStarredOnly);
-
-  const tools: ToolItemDef[] = [
-    {
-      icon: Zap,
-      iconBg: "bg-orange-500",
-      label: "Tin nhắn nhanh",
-      onSelect: () => {
-        setOpen(false);
-        setSettingsOpen(true, "messages");
-      },
-    },
-    {
-      icon: Package,
-      iconBg: "bg-blue-500",
-      label: "Danh mục sản phẩm",
-      badge: "BASIC",
-      disabled: true,
-    },
-    {
-      icon: Zap,
-      iconBg: "bg-purple-500",
-      label: "Tin nhắn tự động",
-      badge: "BASIC",
-      disabled: true,
-    },
-    {
-      icon: Star,
-      iconBg: "bg-yellow-500",
-      label: "Tin nhắn gắn sao",
-      onSelect: () => {
-        setOpen(false);
-        setActiveSection("chat");
-        toggleFilterStarredOnly();
-      },
-    },
-    {
-      icon: Megaphone,
-      iconBg: "bg-sky-600",
-      label: "Tin nhắn hàng loạt",
-      badge: "PRO",
-      disabled: true,
-    },
-  ];
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label="Công cụ zBusiness"
-                  className={cn(
-                    "relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 select-none",
-                    open
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                  )}
-                />
-              }
-            />
-          }
-        >
-          <Briefcase className="h-5 w-5" />
-        </TooltipTrigger>
-        <TooltipContent side="right">Công cụ zBusiness</TooltipContent>
-      </Tooltip>
-      <PopoverContent side="right" align="end" sideOffset={8} className="w-[272px] p-0">
-        {/* Popover header */}
-        <div className="border-b border-border px-3 py-2.5">
-          <span className="text-sm font-semibold text-popover-foreground">Công cụ zBusiness</span>
-        </div>
-        {/* 3-column tool grid */}
-        <div className="grid grid-cols-3 gap-0.5 p-2">
-          {tools.map((item) => (
-            <ToolItemBtn key={item.label} item={item} />
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -393,10 +232,12 @@ export function NavRail() {
         <Tooltip>
           <TooltipTrigger
             render={
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={() => setSettingsOpen(true, "account")}
-                className="relative cursor-pointer rounded-full ring-1 ring-border transition hover:ring-ring focus-visible:outline-none"
+                className="relative h-auto w-auto cursor-pointer rounded-full p-0 ring-1 ring-border transition hover:bg-transparent hover:ring-ring focus-visible:outline-none"
               />
             }
           >
@@ -449,9 +290,6 @@ export function NavRail() {
         <RailBtn label="zCloud" onClick={() => setIsSyncing(true)}>
           <Cloud className="h-5 w-5" strokeWidth={1.75} />
         </RailBtn>
-
-        {/* zBusiness Tools popover */}
-        <ToolsPopover />
 
         {/* Settings dropdown */}
         <SettingsMenu isDark={isDark} />

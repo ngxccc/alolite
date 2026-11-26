@@ -4,11 +4,8 @@ import {
   BellOff,
   ChevronDown,
   ChevronRight,
-  Clock,
   FileText,
-  Pencil,
   Pin,
-  Shield,
   Trash2,
   UserCheck,
   UserPlus,
@@ -39,17 +36,18 @@ function SectionHeader({
   trailing?: React.ReactNode;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onToggle}
-      className="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left hover:bg-accent/50"
+      className="flex h-auto w-full cursor-pointer items-center justify-between rounded-none px-4 py-2.5 text-left hover:bg-accent/50"
     >
       <span className="text-xs font-semibold text-foreground">{label}</span>
       <div className="flex items-center gap-1.5 text-muted-foreground">
         {trailing}
         {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -63,12 +61,9 @@ export function InfoDrawer() {
   const friendStatusMap = useContactsStore((s) => s.friendStatusByUid);
   const userOnlineMap = useContactsStore((s) => s.userOnlineMap);
   const mediaCache = useMediaCacheStore((s) => s.mediaCache);
-  const setPhoneLookupOpen = useUIStore((s) => s.setPhoneLookupOpen);
-  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const setImageViewerState = useUIStore((s) => s.setImageViewerState);
 
   const [membersExpanded, setMembersExpanded] = useState(true);
-  const [boardExpanded, setBoardExpanded] = useState(false);
 
   const thread = threads.find((t) => t.id === selectedThreadId);
   if (!infoDrawerOpen || !thread) return null;
@@ -140,10 +135,11 @@ export function InfoDrawer() {
     onClick?: () => void;
     active?: boolean;
   }) => (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onClick}
-      className="group flex cursor-pointer flex-col items-center gap-1.5"
+      className="group flex h-auto cursor-pointer flex-col items-center gap-1.5 p-0 hover:bg-transparent"
     >
       <div
         className={cn(
@@ -158,15 +154,14 @@ export function InfoDrawer() {
       <span className="text-xs leading-tight text-muted-foreground group-hover:text-foreground">
         {label}
       </span>
-    </button>
+    </Button>
   );
 
   /* ------------------------------------------------------------------ */
   /* Action button sets per thread type                                   */
   /* ------------------------------------------------------------------ */
-  const actionButtons = thread.is_group ? (
-    // Group: 4 buttons
-    <div className="grid grid-cols-4 gap-1 px-3 py-4">
+  const actionButtons = (
+    <div className="grid grid-cols-2 gap-1 px-3 py-4">
       <ActionBtn
         icon={muted ? <BellOff className="h-5 w-5" /> : <Bell className="h-5 w-5" />}
         label={muted ? "Bật TB" : "Tắt thông báo"}
@@ -178,37 +173,6 @@ export function InfoDrawer() {
         label={pinned ? "Bỏ ghim" : "Ghim"}
         onClick={handleTogglePin}
         active={pinned}
-      />
-      <ActionBtn
-        icon={<UserPlus className="h-5 w-5" />}
-        label="Thêm thành viên"
-        onClick={() => setPhoneLookupOpen(true)}
-      />
-      <ActionBtn
-        icon={<Shield className="h-5 w-5" />}
-        label="Quản lý nhóm"
-        onClick={() => setSettingsOpen(true, "general")}
-      />
-    </div>
-  ) : (
-    // 1-on-1 (non-cloud): 3 buttons
-    <div className="grid grid-cols-3 gap-1 px-3 py-4">
-      <ActionBtn
-        icon={muted ? <BellOff className="h-5 w-5" /> : <Bell className="h-5 w-5" />}
-        label={muted ? "Bật TB" : "Tắt thông báo"}
-        onClick={handleToggleMute}
-        active={muted}
-      />
-      <ActionBtn
-        icon={<Pin className="h-5 w-5" />}
-        label={pinned ? "Bỏ ghim" : "Ghim"}
-        onClick={handleTogglePin}
-        active={pinned}
-      />
-      <ActionBtn
-        icon={<Users className="h-5 w-5" />}
-        label="Tạo nhóm trò chuyện"
-        onClick={() => setPhoneLookupOpen(true)}
       />
     </div>
   );
@@ -216,21 +180,23 @@ export function InfoDrawer() {
   return (
     <aside
       aria-label="Thông tin hội thoại"
-      className="fixed inset-y-0 right-0 z-40 flex h-full w-[300px] shrink-0 flex-col overflow-y-auto border-l border-border bg-background/95 text-foreground shadow-xl backdrop-blur-xs lg:static lg:bg-muted/20 lg:shadow-none"
+      className="fixed inset-y-0 right-0 z-40 flex h-full w-75 shrink-0 flex-col overflow-y-auto border-l border-border bg-background/95 text-foreground shadow-xl backdrop-blur-xs lg:static lg:bg-muted/20 lg:shadow-none"
     >
       {/* Header: 64px */}
       <div className="relative flex h-16 shrink-0 items-center justify-center border-b border-border px-4">
         <span className="text-sm font-semibold text-foreground">
           {thread.is_group ? "Thông tin nhóm" : "Thông tin hội thoại"}
         </span>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           aria-label="Đóng thông tin"
           onClick={toggleInfoDrawer}
           className="absolute right-3 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden"
         >
           <X className="h-4 w-4" />
-        </button>
+        </Button>
       </div>
 
       {/* Avatar + Name row */}
@@ -244,16 +210,9 @@ export function InfoDrawer() {
           mediaCache={mediaCache}
         />
         <div className="mt-1 flex items-center gap-1.5">
-          <span className="max-w-[220px] truncate text-sm font-semibold text-foreground">
+          <span className="max-w-55 truncate text-sm font-semibold text-foreground">
             {thread.name || thread.id}
           </span>
-          <button
-            type="button"
-            title="Chỉnh sửa tên"
-            className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground hover:text-foreground"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
         </div>
 
         {/* Subtitle */}
@@ -317,83 +276,40 @@ export function InfoDrawer() {
 
       {/* ---- Sections ---- */}
 
-      {/* Group-specific sections: Thành viên nhóm + Bảng tin nhóm */}
+      {/* Group-specific section: Thành viên nhóm */}
       {thread.is_group ? (
-        <>
-          {/* Thành viên nhóm */}
-          <div className="border-b border-border">
-            <SectionHeader
-              label="Thành viên nhóm"
-              expanded={membersExpanded}
-              onToggle={() => setMembersExpanded((p) => !p)}
-            />
-            {membersExpanded ? (
-              <div className="flex flex-col px-4 pb-2">
-                <button
-                  type="button"
-                  className="flex cursor-pointer items-center gap-3 py-2 text-foreground hover:text-accent-foreground"
-                >
-                  <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="text-xs tabular-nums">{memberCount} thành viên</span>
-                </button>
-                {thread.presentation.members.length > 0 ? (
-                  <div className="flex max-h-44 flex-col gap-0.5 overflow-y-auto pt-1 pb-1">
-                    {thread.presentation.members.map((m) => (
-                      <div key={m.id} className="flex items-center gap-2.5 py-1">
-                        <UserAvatar
-                          id={m.id}
-                          name={m.name}
-                          avatarUrl={m.avatar}
-                          size={28}
-                          mediaCache={mediaCache}
-                        />
-                        <span className="truncate text-xs text-foreground">{m.name || m.id}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
+        <div className="border-b border-border">
+          <SectionHeader
+            label="Thành viên nhóm"
+            expanded={membersExpanded}
+            onToggle={() => setMembersExpanded((p) => !p)}
+          />
+          {membersExpanded ? (
+            <div className="flex flex-col px-4 pb-2">
+              <div className="flex items-center gap-3 py-2 text-foreground">
+                <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="text-xs tabular-nums">{memberCount} thành viên</span>
               </div>
-            ) : null}
-          </div>
-
-          {/* Bảng tin nhóm */}
-          <div className="border-b border-border">
-            <SectionHeader
-              label="Bảng tin nhóm"
-              expanded={boardExpanded}
-              onToggle={() => setBoardExpanded((p) => !p)}
-            />
-            {boardExpanded ? (
-              <div className="flex flex-col px-4 pb-2.5">
-                <button
-                  type="button"
-                  className="flex cursor-pointer items-center gap-3 py-2 text-foreground hover:text-accent-foreground"
-                >
-                  <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="text-xs">Danh sách nhắc hẹn</span>
-                </button>
-                <button
-                  type="button"
-                  className="flex cursor-pointer items-center gap-3 py-2 text-foreground hover:text-accent-foreground"
-                >
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="text-xs">Ghi chú, ghim, bình chọn</span>
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </>
-      ) : (
-        <div className="flex flex-col border-b border-border px-4 py-1.5">
-          <button
-            type="button"
-            className="flex cursor-pointer items-center gap-3 py-2 text-foreground hover:text-accent-foreground"
-          >
-            <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="text-xs">Danh sách nhắc hẹn</span>
-          </button>
+              {thread.presentation.members.length > 0 ? (
+                <div className="flex max-h-44 flex-col gap-0.5 overflow-y-auto pt-1 pb-1">
+                  {thread.presentation.members.map((m) => (
+                    <div key={m.id} className="flex items-center gap-2.5 py-1">
+                      <UserAvatar
+                        id={m.id}
+                        name={m.name}
+                        avatarUrl={m.avatar}
+                        size={28}
+                        mediaCache={mediaCache}
+                      />
+                      <span className="truncate text-xs text-foreground">{m.name || m.id}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      )}
+      ) : null}
 
       {/* Shared Media Tabs (Ảnh | File | Link) */}
       <Tabs defaultValue="photos" className="flex flex-1 flex-col">
@@ -517,9 +433,10 @@ export function InfoDrawer() {
 
       {/* Delete conversation — quiet red text row */}
       <div className="border-t border-border">
-        <button
+        <Button
           type="button"
-          className="flex w-full cursor-pointer items-center justify-center gap-2 py-3 text-xs font-medium text-destructive hover:bg-destructive/5"
+          variant="ghost"
+          className="flex h-auto w-full cursor-pointer items-center justify-center gap-2 rounded-none py-3 text-xs font-medium text-destructive hover:bg-destructive/5 hover:text-destructive"
           onClick={() => {
             const last = thread.messages.at(-1);
             void ipc.deleteThread(
@@ -531,7 +448,7 @@ export function InfoDrawer() {
         >
           <Trash2 className="h-3.5 w-3.5" />
           Xóa cuộc trò chuyện
-        </button>
+        </Button>
       </div>
     </aside>
   );

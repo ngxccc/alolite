@@ -1,21 +1,21 @@
-import * as React from "react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { cn } from "cn";
+import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 
 export interface ChatMessageListProps extends React.HTMLAttributes<HTMLDivElement> {
   smooth?: boolean;
   showScrollToBottom?: boolean;
 }
 
-export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListProps>(
+export const ChatMessageList = forwardRef<HTMLDivElement, ChatMessageListProps>(
   ({ className, children, smooth = false, showScrollToBottom = true, ...props }, ref) => {
-    const scrollElRef = React.useRef<HTMLDivElement | null>(null);
-    const contentRef = React.useRef<HTMLDivElement | null>(null);
-    const isAtBottomRef = React.useRef(true);
-    const [isAtBottom, setIsAtBottom] = React.useState(true);
+    const scrollElRef = useRef<HTMLDivElement | null>(null);
+    const contentRef = useRef<HTMLDivElement | null>(null);
+    const isAtBottomRef = useRef(true);
+    const [isAtBottom, setIsAtBottom] = useState(true);
 
-    const setMergedRef = React.useCallback(
+    const setMergedRef = useCallback(
       (node: HTMLDivElement | null) => {
         scrollElRef.current = node;
         if (typeof ref === "function") {
@@ -35,7 +35,7 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
       setIsAtBottom(atBottom);
     };
 
-    React.useEffect(() => {
+    useEffect(() => {
       const content = contentRef.current;
       const scroller = scrollElRef.current;
       if (!content || !scroller || typeof ResizeObserver === "undefined") return;

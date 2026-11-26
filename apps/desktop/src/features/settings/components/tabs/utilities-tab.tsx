@@ -4,9 +4,7 @@ import { useUIStore } from "@/stores";
 import type { AutoReplyRule } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
-import { Switch } from "@/shared/ui/switch";
-import { cn } from "cn";
-import { RowDivider, SectionHeading, SettingCard, SwitchRow } from "../primitives";
+import { SectionHeading, SettingCard, SwitchRow } from "../primitives";
 import type { SettingsTabProps } from "../types";
 
 export function UtilitiesTab({ settings, updateSettings }: SettingsTabProps) {
@@ -32,56 +30,6 @@ export function UtilitiesTab({ settings, updateSettings }: SettingsTabProps) {
           checked={settings.suggest_stickers_while_typing}
           onChange={(v) => updateSettings({ suggest_stickers_while_typing: v })}
         />
-      </SettingCard>
-
-      <SectionHeading>Phím tắt @</SectionHeading>
-      <SettingCard>
-        {[
-          {
-            key: "suggest_mentions" as const,
-            label: "Gợi ý nhắc tên (@mention)",
-            desc: "Gợi ý mention khi soạn tin",
-            color: "bg-[#e94949]",
-            abbr: "@",
-          },
-          {
-            key: "enable_gif_search" as const,
-            label: "Tìm GIF",
-            desc: "Nhập từ khóa để tìm GIF",
-            color: "bg-[#2d7dd2]",
-            abbr: "GIF",
-          },
-          {
-            key: "enable_sticker_keyword_search" as const,
-            label: "Tìm nhãn dán",
-            desc: "Nhập từ khóa để tìm nhãn dán",
-            color: "bg-[#8b5cf6]",
-            abbr: ":)",
-          },
-        ].map((item, i) => (
-          <div key={item.key}>
-            {i > 0 && <RowDivider />}
-            <div className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-2">
-              <div
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white",
-                  item.color,
-                )}
-              >
-                {item.abbr}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm text-foreground">{item.label}</div>
-                <div className="text-xs text-muted-foreground">{item.desc}</div>
-              </div>
-              <Switch
-                size="lg"
-                checked={settings[item.key]}
-                onCheckedChange={(v) => updateSettings({ [item.key]: v })}
-              />
-            </div>
-          </div>
-        ))}
       </SettingCard>
 
       <SectionHeading>Đa phiên bản</SectionHeading>

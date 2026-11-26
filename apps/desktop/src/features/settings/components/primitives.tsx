@@ -18,7 +18,7 @@ export function SwitchRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex min-h-[44px] items-center justify-between gap-4 px-4 py-2">
+    <div className="flex min-h-11 items-center justify-between gap-4 px-4 py-2">
       <div className="min-w-0 flex-1">
         <div className="text-sm text-foreground">{label}</div>
         {desc ? <div className="mt-0.5 text-xs text-muted-foreground">{desc}</div> : null}
@@ -42,10 +42,10 @@ export function SelectRow({
   options: { value: string; label: string }[];
 }) {
   return (
-    <div className="flex min-h-[44px] items-center justify-between gap-4 px-4 py-2">
+    <div className="flex min-h-11 items-center justify-between gap-4 px-4 py-2">
       <span className="text-sm text-foreground">{label}</span>
       <Select value={value} items={options} onValueChange={(v) => v && onChange(v)}>
-        <SelectTrigger className="h-[38px] min-w-[160px] border-border bg-canvas text-sm">
+        <SelectTrigger className="h-9.5 min-w-40 border-border bg-canvas text-sm">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -63,7 +63,7 @@ export function SelectRow({
 /** Chevron-only nav row (block messages, manage quick messages, etc.) */
 export function ChevronRow({ label, desc }: { label: string; desc?: string }) {
   return (
-    <div className="flex min-h-[44px] cursor-pointer items-center justify-between gap-4 px-4 py-2 hover:bg-white/[0.03]">
+    <div className="flex min-h-11 cursor-pointer items-center justify-between gap-4 px-4 py-2 hover:bg-white/3">
       <div className="min-w-0 flex-1">
         <div className="text-sm text-foreground">{label}</div>
         {desc ? <div className="mt-0.5 text-xs text-muted-foreground">{desc}</div> : null}
@@ -100,36 +100,36 @@ export function RowDivider() {
 export function ThemeThumbnail({ mode }: { mode: "light" | "dark" | "system" }) {
   if (mode === "light") {
     return (
-      <div className="relative h-[72px] w-full overflow-hidden rounded border border-[#e4e4e7] bg-[#fafafa]">
+      <div className="relative h-18 w-full overflow-hidden rounded border border-[#e4e4e7] bg-[#fafafa]">
         <div className="absolute inset-y-0 left-0 w-[30%] border-r border-[#e4e4e7] bg-white" />
-        <div className="absolute right-3 bottom-3 h-[12px] w-[45%] rounded-sm bg-[#18181b]" />
-        <div className="absolute bottom-7 left-[32%] h-[12px] w-[40%] rounded-sm border border-[#e4e4e7] bg-white" />
-        <div className="absolute inset-x-0 top-0 h-[14px] border-b border-[#e4e4e7] bg-white" />
+        <div className="absolute right-3 bottom-3 h-3 w-[45%] rounded-sm bg-[#18181b]" />
+        <div className="absolute bottom-7 left-[32%] h-3 w-[40%] rounded-sm border border-[#e4e4e7] bg-white" />
+        <div className="absolute inset-x-0 top-0 h-3.5 border-b border-[#e4e4e7] bg-white" />
       </div>
     );
   }
   if (mode === "dark") {
     return (
-      <div className="relative h-[72px] w-full overflow-hidden rounded border border-[#27272a] bg-[#09090b]">
+      <div className="relative h-18 w-full overflow-hidden rounded border border-[#27272a] bg-[#09090b]">
         <div className="absolute inset-y-0 left-0 w-[30%] border-r border-[#27272a] bg-[#09090b]" />
-        <div className="absolute right-3 bottom-3 h-[12px] w-[45%] rounded-sm bg-[#27272a]" />
-        <div className="absolute bottom-7 left-[32%] h-[12px] w-[40%] rounded-sm bg-[#18181b]" />
-        <div className="absolute inset-x-0 top-0 h-[14px] border-b border-[#27272a] bg-[#09090b]" />
+        <div className="absolute right-3 bottom-3 h-3 w-[45%] rounded-sm bg-[#27272a]" />
+        <div className="absolute bottom-7 left-[32%] h-3 w-[40%] rounded-sm bg-[#18181b]" />
+        <div className="absolute inset-x-0 top-0 h-3.5 border-b border-[#27272a] bg-[#09090b]" />
       </div>
     );
   }
   // system: half-and-half
   return (
-    <div className="relative h-[72px] w-full overflow-hidden rounded border border-border">
+    <div className="relative h-18 w-full overflow-hidden rounded border border-border">
       {/* left half dark */}
       <div className="absolute inset-y-0 left-0 w-1/2 bg-[#09090b]">
         <div className="absolute inset-y-0 left-0 w-[35%] border-r border-[#27272a] bg-[#09090b]" />
-        <div className="absolute inset-x-0 top-0 h-[14px] border-b border-[#27272a] bg-[#09090b]" />
+        <div className="absolute inset-x-0 top-0 h-3.5 border-b border-[#27272a] bg-[#09090b]" />
       </div>
       {/* right half light */}
       <div className="absolute inset-y-0 right-0 w-1/2 bg-[#fafafa]">
-        <div className="absolute inset-x-0 top-0 h-[14px] border-b border-[#e4e4e7] bg-white" />
-        <div className="absolute right-2 bottom-3 h-[10px] w-[55%] rounded-sm bg-[#18181b]" />
+        <div className="absolute inset-x-0 top-0 h-3.5 border-b border-[#e4e4e7] bg-white" />
+        <div className="absolute right-2 bottom-3 h-2.5 w-[55%] rounded-sm bg-[#18181b]" />
       </div>
     </div>
   );
@@ -140,14 +140,14 @@ export function NotifThumbnail({ active }: { active: boolean }) {
   return (
     <div
       className={cn(
-        "relative mx-auto flex h-[60px] w-[80px] flex-col items-center justify-center rounded border-2",
+        "relative mx-auto flex h-15 w-20 flex-col items-center justify-center rounded border-2",
         active ? "border-primary" : "border-border",
       )}
     >
       {/* laptop screen */}
       <div
         className={cn(
-          "h-[32px] w-[56px] rounded-t border-2",
+          "h-8 w-14 rounded-t border-2",
           active ? "border-primary" : "border-muted-foreground",
         )}
       >
@@ -156,7 +156,7 @@ export function NotifThumbnail({ active }: { active: boolean }) {
       {/* laptop base */}
       <div
         className={cn(
-          "h-[6px] w-[64px] rounded-b border-x-2 border-b-2",
+          "h-1.5 w-16 rounded-b border-x-2 border-b-2",
           active ? "border-primary" : "border-muted-foreground",
         )}
       />
