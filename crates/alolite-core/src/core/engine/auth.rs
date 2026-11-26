@@ -11,7 +11,6 @@ use crate::protocol::auth::{login, qr};
 use crate::protocol::messaging::polling::{poll_new_messages, PollState};
 use crate::protocol::messaging::stickers::fetch_sticker_suggest_keywords;
 use crate::protocol::messaging::unread::get_mute_snapshot;
-use crate::protocol::messaging::Thread;
 use crate::protocol::session::{Session, SessionStatus};
 use crate::protocol::social::friends::get_friends_with;
 use crate::protocol::social::groups::get_groups;
@@ -21,8 +20,8 @@ use crate::services::account_manager::{
     switch_to_account, AccountProfile,
 };
 use crate::storage::{
-    load_history_into_threads, load_threads_cache, persist_account_threads,
-    preload_account_history, MessageStore,
+    load_history_into_threads, load_poll_state_for_account, load_threads_cache,
+    persist_account_threads_with_poll_state, preload_account_history, MessageStore,
 };
 
 impl CoreEngine {
@@ -243,7 +242,9 @@ impl CoreEngine {
             avatar,
         });
 
-        let mut list: Vec<Thread> = Vec::new();
+        let mut list = tokio::task::spawn_blocking(load_threads_cache)
+            .await
+            .unwrap_or_default();
         if let Ok(friends) = get_friends_with(&s, |t| preload_account_history(&uin, t)).await {
             merge_thread_headers(&mut list, friends, false);
         }
@@ -252,18 +253,30 @@ impl CoreEngine {
         }
 
         let db_path = self.resolve_db_path_for_uin(&uin);
-        let mut list = tokio::task::spawn_blocking(move || {
+        let uin_for_ps = uin.clone();
+        let (mut list, persisted_ps) = tokio::task::spawn_blocking(move || {
             load_history_into_threads(&db_path, &mut list, MessageStore::PRELOAD_MSGS);
-            list
+            let ps = load_poll_state_for_account(&uin_for_ps);
+            (list, ps)
         })
         .await
         .unwrap_or_default();
 
         {
             let mut ps = self.poll_state.lock().await;
-            *ps = PollState::default();
+            *ps = persisted_ps.unwrap_or_default();
             if poll_new_messages(&s, &mut ps, &mut list).await.is_ok() {
-                persist_account_threads(&uin, &list);
+                let uin_persist = uin.clone();
+                let list_persist = list.clone();
+                let ps_persist = ps.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    persist_account_threads_with_poll_state(
+                        &uin_persist,
+                        &list_persist,
+                        Some(&ps_persist),
+                    );
+                })
+                .await;
             }
         }
         if let Ok(mute_snap) = get_mute_snapshot(&s, unix_now()).await {
@@ -349,15 +362,21 @@ impl CoreEngine {
                 snapshot.has_live_credentials() && snapshot.session_status().await.is_valid();
             self.set_session_verified(verified);
             let db_path = self.resolve_db_path_for_uin(&uin);
-            let threads = tokio::task::spawn_blocking(move || {
+            let uin_ps = uin.clone();
+            let (threads, saved_ps) = tokio::task::spawn_blocking(move || {
                 let mut threads = load_threads_cache();
                 if let Ok(store) = MessageStore::open(&db_path) {
                     let _ = store.hydrate_threads(&mut threads, 50);
                 }
-                threads
+                let ps = load_poll_state_for_account(&uin_ps);
+                (threads, ps)
             })
             .await
             .unwrap_or_default();
+            {
+                let mut ps = self.poll_state.lock().await;
+                *ps = saved_ps.unwrap_or_default();
+            }
             self.emit(CoreEvent::AccountSwitched {
                 uin,
                 name,

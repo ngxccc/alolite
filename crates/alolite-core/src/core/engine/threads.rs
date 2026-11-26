@@ -11,7 +11,7 @@ use super::CoreEngine;
 use crate::clock::unix_now;
 use crate::core::events::CoreEvent;
 use crate::protocol::messaging::polling::{
-    get_chat_from_polling, get_cloud_messages, get_last_msgs, poll_new_messages, PollState,
+    get_chat_from_polling, get_cloud_messages, get_last_msgs, poll_new_messages,
 };
 use crate::protocol::messaging::threads::{
     delete_conversation, fetch_pinned_topics, is_generic_thread_name, set_hidden_conversation,
@@ -29,10 +29,12 @@ use crate::protocol::sync::{
     PHONE_SYNC_RUNNING,
 };
 use crate::storage::{
-    commit_phone_sync_to_store, db_path_for_account, load_history_into_threads, load_threads_cache,
-    oldest_message_id, persist_account_threads, persist_resolved_thread_names,
+    commit_phone_sync_to_store, db_path_for_account, load_history_into_threads,
+    load_poll_state_for_account, load_threads_cache, oldest_message_id,
+    persist_account_threads_with_poll_state, persist_resolved_thread_names,
     persist_thread_snapshot, persist_threads as storage_persist_threads, preload_account_history,
-    save_threads_cache, MessageStore,
+    save_threads_cache, thread_cache::merge_threads_into_cache,
+    thread_cache::update_cached_thread_unread, MessageStore,
 };
 
 async fn compose_sync_thread(s: &Session, t: &mut Thread) -> Result<usize> {
@@ -84,6 +86,15 @@ impl CoreEngine {
     }
 
     pub async fn mark_thread_unread(&self, thread_id: &str, is_group: bool, unread: bool) {
+        let db_path = self.active_db_path().await;
+        let tid = thread_id.to_string();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut store) = MessageStore::open(&db_path) {
+                let _ = store.set_thread_marked_unread(&tid, unread);
+            }
+            update_cached_thread_unread(&tid, None, Some(unread));
+        })
+        .await;
         let s = self.session.lock().await.clone();
         let _ = set_unread_mark(&s, thread_id, is_group, unread).await;
     }
@@ -203,9 +214,32 @@ impl CoreEngine {
             "⏳ Đang làm mới tin nhắn cho {} hội thoại (3/3)…",
             list.len()
         )));
-        let mut fresh_ps = PollState::default();
+        let mut fresh_ps = {
+            let ps = self.poll_state.lock().await;
+            ps.clone()
+        };
+        if fresh_ps.last_action_id == "1" {
+            let uin_ps = uin.to_string();
+            if let Ok(Some(saved_ps)) =
+                tokio::task::spawn_blocking(move || load_poll_state_for_account(&uin_ps)).await
+            {
+                fresh_ps = saved_ps;
+            }
+        }
         match poll_new_messages(&s, &mut fresh_ps, &mut list).await {
-            Ok(()) => persist_account_threads(uin, &list),
+            Ok(()) => {
+                let uin_persist = uin.to_string();
+                let list_persist = list.clone();
+                let ps_persist = fresh_ps.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    persist_account_threads_with_poll_state(
+                        &uin_persist,
+                        &list_persist,
+                        Some(&ps_persist),
+                    );
+                })
+                .await;
+            }
             Err(e) => {
                 crate::logger::log_error("core::refresh_poll", &e.to_string());
                 errors.push(format!("Tin nhắn: {e}"));
@@ -261,17 +295,32 @@ impl CoreEngine {
         let s = self.session.lock().await.clone();
         if s.has_live_credentials() && self.is_session_verified() {
             let known_threads = self.known_threads_snapshot();
+            let uin = s.login.as_ref().map(|l| l.uin.clone()).unwrap_or_default();
+            let db_path = self.resolve_db_path_for_uin(&uin);
+            let stored_unreads = tokio::task::spawn_blocking(move || {
+                MessageStore::open(&db_path)
+                    .and_then(|st| st.load_thread_unreads())
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+
             let mut temp_threads: Vec<Thread> = known_threads
                 .into_iter()
-                .map(|(id, name, is_group)| Thread {
-                    id,
-                    name,
-                    is_group,
-                    ..Default::default()
+                .map(|(id, name, is_group)| {
+                    let unread = stored_unreads.get(&id).cloned().unwrap_or_default();
+                    Thread {
+                        id,
+                        name,
+                        is_group,
+                        unread,
+                        ..Default::default()
+                    }
                 })
                 .collect();
 
             let mut poll_err: Option<anyhow::Error> = None;
+            let mut saw_reset = false;
             for _ in 0..3 {
                 let poll_res = {
                     let mut ps = self.poll_state.lock().await;
@@ -280,6 +329,14 @@ impl CoreEngine {
                 match poll_res {
                     Ok(batch) => {
                         batch.merge_into(&mut temp_threads);
+                        batch.merge_read_points_into(&mut temp_threads);
+                        if batch.has_reset {
+                            saw_reset = true;
+                            crate::logger::log_error(
+                                "core::poll_once",
+                                "getChatFromPolling returned has_reset; running preview sync",
+                            );
+                        }
                         for sync_ev in batch.sync_controls {
                             self.handle_sync_control_event(&s, sync_ev).await;
                         }
@@ -294,6 +351,11 @@ impl CoreEngine {
                         poll_err = Some(e);
                         break;
                     }
+                }
+            }
+            if poll_err.is_none() && saw_reset {
+                if let Ok(preview_batch) = get_last_msgs(&s, &[]).await {
+                    preview_batch.merge_into(&mut temp_threads);
                 }
             }
 
@@ -323,7 +385,24 @@ impl CoreEngine {
                 None => {
                     self.poll_failures.store(0, Ordering::Relaxed);
                     self.poll_paused_until.store(0, Ordering::Relaxed);
-                    temp_threads.retain(|t| !t.messages.is_empty());
+                    temp_threads.retain(|t| !t.messages.is_empty() || t.unread.fresh);
+                    for t in temp_threads.iter_mut() {
+                        t.unread.observe_for_account(&t.messages, &uin);
+                    }
+                    let ps_snap = self.poll_state.lock().await.clone();
+                    let threads_persist = temp_threads.clone();
+                    let db_path_persist = self.resolve_db_path_for_uin(&uin);
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Ok(mut store) = MessageStore::open(&db_path_persist) {
+                            let _ = crate::storage::persist_threads_with_poll_state(
+                                &mut store,
+                                &threads_persist,
+                                Some(&ps_snap),
+                            );
+                        }
+                        merge_threads_into_cache(&threads_persist);
+                    })
+                    .await;
                     if !temp_threads.is_empty() {
                         resolve_thread_names(&s, &mut temp_threads).await;
                         self.dispatch_autoreplies(&s, &temp_threads).await;

@@ -640,6 +640,7 @@ pub async fn resolve_thread_names(s: &Session, threads: &mut [Thread]) {
                 && (is_generic_thread_name(&t.name)
                     || t.preview.is_empty()
                     || t.avatar.as_deref().unwrap_or("").is_empty()
+                    || t.presentation.member_count.is_none()
                     || t.presentation.members.is_empty())
         })
         .map(|t| t.id.clone())
