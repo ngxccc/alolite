@@ -185,6 +185,10 @@ export function dispatchCoreEvent(event: CoreEventDto): void {
       ui.setStatusMessage(`Đã gửi đính kèm lúc ${formatClockNow()}`);
       return;
 
+    case "CallHistoryRecorded":
+      chat.reconcileSentMessageInThread(event.payload.thread_id, event.payload.msg);
+      return;
+
     case "QuoteSent": {
       const now = formatClockNow();
       const finalId = event.payload.msg_id || `out_${event.payload.client_message_id}`;

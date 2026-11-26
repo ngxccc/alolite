@@ -119,6 +119,10 @@ pub enum CoreEvent {
         thread_id: String,
         msg: ChatMessage,
     },
+    CallHistoryRecorded {
+        thread_id: String,
+        msg: ChatMessage,
+    },
     StickerImageReady {
         key: String,
         image: CoreImageData,

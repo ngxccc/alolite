@@ -11,7 +11,7 @@ pub mod threads;
 pub mod unread;
 
 pub use links::LinkMetadata;
-pub use model::{DeliveryState, MessageKind, UnreadPolicy, WireMessageRef};
+pub use model::{CallOutcome, DeliveryState, MessageKind, UnreadPolicy, WireMessageRef};
 pub use polling::{CloudMessagesPage, LastMsgsBatch, PollBatch, PollState};
 pub use stickers::{StickerItem, StickerPackInfo};
 pub use threads::{ChatMessage, Thread};

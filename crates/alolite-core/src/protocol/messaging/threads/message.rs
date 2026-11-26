@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 
 use crate::endpoints;
 use crate::protocol::messaging::attachments::extract_link_info;
-use crate::protocol::messaging::model::{DeliveryState, MessageKind, UnreadPolicy, WireMessageRef};
+use crate::protocol::messaging::model::{
+    CallOutcome, DeliveryState, MessageKind, UnreadPolicy, WireMessageRef,
+};
 use crate::protocol::messaging::reactions::{
     legacy_emojis, merge_untracked_snapshot, parse_reactions, ReactionEvent,
     ReactionSnapshotProvenance, ReactionSummary, ReactionVersion,
@@ -74,6 +76,10 @@ pub struct ChatMessage {
     pub link_thumb: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_src: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_outcome: Option<CallOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_duration_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_source: Option<Value>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

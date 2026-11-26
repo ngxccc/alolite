@@ -1,4 +1,4 @@
-import type { ChatMessage, StickerItem } from "@/shared/types/ipc.generated";
+import type { CallOutcome, ChatMessage, StickerItem } from "@/shared/types/ipc.generated";
 
 export function stickerCacheKey(stickerId: number, cateId = 0): string {
   return `stk_${cateId}_${stickerId}`;
@@ -32,16 +32,90 @@ export interface CallCardMeta {
   subtitle: string;
   isMissedOrFailed: boolean;
   isVideo: boolean;
+  outcome?: CallOutcome;
+  isOutgoing?: boolean;
+}
+
+export function formatCallDuration(durationSecs: number): string {
+  const mins = Math.floor(durationSecs / 60);
+  const secs = Math.floor(durationSecs % 60);
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 export function parseCallCard(msg: ChatMessage): CallCardMeta | null {
   const txt = msg.text.trim();
+  const isVideo = txt.toLowerCase().includes("video");
+
+  if (msg.kind === "call") {
+    const outcome = msg.call_outcome ?? undefined;
+    const directionLabel = msg.is_outgoing ? "Cuộc gọi đi" : "Cuộc gọi đến";
+
+    if (outcome === "completed") {
+      const dur =
+        typeof msg.call_duration_secs === "number"
+          ? formatCallDuration(msg.call_duration_secs)
+          : "";
+      return {
+        title: isVideo ? "Cuộc gọi video" : "Cuộc gọi thoại",
+        subtitle: dur ? `${directionLabel} · ${dur}` : directionLabel,
+        isMissedOrFailed: false,
+        isVideo,
+        outcome,
+        isOutgoing: msg.is_outgoing,
+      };
+    }
+
+    if (outcome === "missed") {
+      return {
+        title: "Cuộc gọi nhỡ",
+        subtitle: msg.is_outgoing ? "Không có phản hồi" : "Cuộc gọi đến bị nhỡ",
+        isMissedOrFailed: true,
+        isVideo,
+        outcome,
+        isOutgoing: msg.is_outgoing,
+      };
+    }
+
+    if (outcome === "rejected") {
+      return {
+        title: "Cuộc gọi bị từ chối",
+        subtitle: msg.is_outgoing ? "Người nhận đã từ chối" : "Đã từ chối",
+        isMissedOrFailed: true,
+        isVideo,
+        outcome,
+        isOutgoing: msg.is_outgoing,
+      };
+    }
+
+    if (outcome === "cancelled") {
+      return {
+        title: "Đã hủy cuộc gọi",
+        subtitle: "Cuộc gọi đi đã hủy",
+        isMissedOrFailed: true,
+        isVideo,
+        outcome,
+        isOutgoing: msg.is_outgoing,
+      };
+    }
+
+    const missed =
+      txt.toLowerCase().includes("nhỡ") ||
+      txt.toLowerCase().includes("từ chối") ||
+      txt.toLowerCase().includes("hủy");
+    return {
+      title: isVideo ? "Cuộc gọi video" : "Cuộc gọi thoại",
+      subtitle: txt.replace(/^\[|\]$/g, "") || directionLabel,
+      isMissedOrFailed: missed,
+      isVideo,
+      isOutgoing: msg.is_outgoing,
+    };
+  }
+
   const isCall =
     txt.startsWith("[Cuộc gọi") ||
     txt.startsWith("Cuộc gọi") ||
     (msg.kind === "action" && txt.toLowerCase().includes("cuộc gọi"));
   if (!isCall) return null;
-  const isVideo = txt.toLowerCase().includes("video");
   const missed =
     txt.toLowerCase().includes("nhỡ") ||
     txt.toLowerCase().includes("từ chối") ||

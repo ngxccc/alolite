@@ -171,6 +171,10 @@ pub enum CoreEventDto {
         thread_id: String,
         msg: ChatMessage,
     },
+    CallHistoryRecorded {
+        thread_id: String,
+        msg: ChatMessage,
+    },
     StickerImageReady {
         key: String,
         data_url: String,
@@ -384,6 +388,9 @@ impl From<CoreEvent> for CoreEventDto {
                 sticker_type,
             },
             CoreEvent::AttachmentSent { thread_id, msg } => Self::AttachmentSent { thread_id, msg },
+            CoreEvent::CallHistoryRecorded { thread_id, msg } => {
+                Self::CallHistoryRecorded { thread_id, msg }
+            }
             CoreEvent::StickerImageReady { key, image } => Self::StickerImageReady {
                 key,
                 data_url: image.to_png_data_url().unwrap_or_default(),

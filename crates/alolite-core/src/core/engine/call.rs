@@ -29,11 +29,13 @@ use crate::protocol::call::zrtp::{
 use crate::protocol::call::{
     CallDirection, CallEffect, CallEndReason, CallEvent, CallSession, CallState,
 };
+use crate::protocol::messaging::{CallOutcome, ChatMessage, MessageKind};
 use crate::protocol::session::Session;
 use crate::services::call_media::{
     NetEq, NetEqConfig, NullAudioBackend, NullOpusDecoder, NullOpusEncoder, OpusDecoderBackend,
     OpusEncoderBackend, FRAME_SAMPLES,
 };
+use crate::storage::{MessageStore, StoredMessage};
 
 /// Default ring timeout before unanswered incoming/outgoing calls auto-cancel (`60 s`).
 pub const DEFAULT_RING_TIMEOUT: Duration = Duration::from_secs(60);
@@ -160,6 +162,97 @@ fn end_reason_label(reason: CallEndReason) -> String {
         CallEndReason::NetworkError => "network_error",
     }
     .to_string()
+}
+
+fn format_call_duration(duration_secs: u64) -> String {
+    let mins = duration_secs / 60;
+    let secs = duration_secs % 60;
+    format!("{mins:02}:{secs:02}")
+}
+
+fn resolve_call_outcome(
+    reason: CallEndReason,
+    is_outgoing: bool,
+    was_connected: bool,
+) -> CallOutcome {
+    if was_connected {
+        return CallOutcome::Completed;
+    }
+    match reason {
+        CallEndReason::Cancelled => {
+            if is_outgoing {
+                CallOutcome::Cancelled
+            } else {
+                CallOutcome::Missed
+            }
+        }
+        CallEndReason::Rejected | CallEndReason::Busy => CallOutcome::Rejected,
+        CallEndReason::RingTimeout => CallOutcome::Missed,
+        CallEndReason::Normal
+        | CallEndReason::PeerEnded
+        | CallEndReason::MediaTimeout
+        | CallEndReason::NetworkError => {
+            if is_outgoing {
+                CallOutcome::Cancelled
+            } else {
+                CallOutcome::Missed
+            }
+        }
+    }
+}
+
+fn build_call_history_message(
+    call_id: u32,
+    peer_id: &str,
+    peer_name: Option<&str>,
+    is_outgoing: bool,
+    was_connected: bool,
+    duration_secs: u64,
+    reason: CallEndReason,
+    ts_ms: i64,
+) -> ChatMessage {
+    let outcome = resolve_call_outcome(reason, is_outgoing, was_connected);
+    let call_duration_secs = (outcome == CallOutcome::Completed).then_some(duration_secs);
+    let text = match outcome {
+        CallOutcome::Completed => {
+            format!("Cuộc gọi thoại ({})", format_call_duration(duration_secs))
+        }
+        CallOutcome::Missed => "Cuộc gọi nhỡ".to_string(),
+        CallOutcome::Rejected => {
+            if is_outgoing {
+                "Cuộc gọi bị từ chối".to_string()
+            } else {
+                "Đã từ chối cuộc gọi".to_string()
+            }
+        }
+        CallOutcome::Cancelled => "Đã hủy cuộc gọi".to_string(),
+    };
+    let sender = if is_outgoing {
+        "Tôi".to_string()
+    } else {
+        peer_name
+            .filter(|n| !n.is_empty())
+            .unwrap_or(peer_id)
+            .to_string()
+    };
+    let sender_id = if is_outgoing {
+        Some("0".to_string())
+    } else {
+        Some(peer_id.to_string())
+    };
+    ChatMessage {
+        kind: MessageKind::Call,
+        id: format!("call_{call_id}"),
+        sender,
+        sender_id,
+        text,
+        time: crate::clock::message_time(ts_ms),
+        is_outgoing,
+        ts: ts_ms,
+        call_outcome: Some(outcome),
+        call_duration_secs,
+        ..Default::default()
+    }
 }
 
 fn snapshot_from_state(g: &CallManagerState, end_reason: Option<CallEndReason>) -> CallSnapshot {
@@ -594,7 +687,16 @@ impl CoreEngine {
         }
 
         if needs_teardown_complete {
-            let (call_id, sess_id, peer_id, duration_secs, teardown_effects) = {
+            let (
+                call_id,
+                sess_id,
+                peer_id,
+                peer_name,
+                is_outgoing,
+                was_connected,
+                duration_secs,
+                teardown_effects,
+            ) = {
                 let mut g = self
                     .call_manager
                     .state
@@ -603,6 +705,9 @@ impl CoreEngine {
                 let cid = g.session.call_id().unwrap_or(0);
                 let sid = g.session.sess_id().unwrap_or_default().to_string();
                 let pid = g.session.peer_id().unwrap_or_default().to_string();
+                let pname = g.peer_name.clone();
+                let outgoing = g.session.direction() == Some(CallDirection::Outgoing);
+                let connected = g.started_at_ms.is_some();
                 let dur = g
                     .started_at_ms
                     .map(|st| (((now_ms() as i64) - st).max(0) / 1000) as u64)
@@ -617,7 +722,7 @@ impl CoreEngine {
                 g.p2p_candidates.clear();
                 g.srtp_key = None;
                 g.started_at_ms = None;
-                (cid, sid, pid, dur, effs)
+                (cid, sid, pid, pname, outgoing, connected, dur, effs)
             };
 
             let mut end_reason_for_idle = None;
@@ -634,12 +739,44 @@ impl CoreEngine {
                         end_reason_for_idle = Some(reason);
                     }
                     CallEffect::StateChanged(CallState::Idle) => {
+                        if call_id != 0 && !peer_id.is_empty() {
+                            let reason = end_reason_for_idle.unwrap_or(CallEndReason::Normal);
+                            let msg = build_call_history_message(
+                                call_id,
+                                &peer_id,
+                                peer_name.as_deref(),
+                                is_outgoing,
+                                was_connected,
+                                duration_secs,
+                                reason,
+                                now_ms() as i64,
+                            );
+                            self.persist_call_history_message(&peer_id, &msg).await;
+                            self.emit(CoreEvent::CallHistoryRecorded {
+                                thread_id: peer_id.clone(),
+                                msg,
+                            });
+                        }
                         self.emit_call_snapshot(end_reason_for_idle);
                     }
                     _ => {}
                 }
             }
         }
+    }
+
+    async fn persist_call_history_message(&self, thread_id: &str, msg: &ChatMessage) {
+        let db_path = self.active_db_path().await;
+        let mut sm = StoredMessage::from(msg);
+        sm.thread_id = thread_id.to_string();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut store) = MessageStore::open(&db_path) {
+                if let Err(err) = store.upsert_message(&sm) {
+                    crate::logger::log_error("core::call_history_persist", &err.to_string());
+                }
+            }
+        })
+        .await;
     }
 
     async fn dispatch_outbound_signal(&self, s_snap: &Session, sig: CallSignalCode) {
@@ -1521,5 +1658,75 @@ mod tests {
 
         engine.end_call().await.unwrap();
         assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+    }
+
+    #[tokio::test]
+    async fn call_teardown_persists_message_kind_call_and_emits_event() {
+        use crate::protocol::messaging::{CallOutcome, MessageKind};
+        use crate::storage::MessageStore;
+
+        let dir = std::env::temp_dir().join(format!("alolite_call_hist_{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("history.db");
+        let db_str = db_path.to_str().unwrap().to_string();
+
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            &db_str,
+            sink,
+            Duration::from_millis(60),
+            Duration::from_millis(60),
+            Duration::from_millis(20),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        // 1. Incoming call rejected locally -> CallOutcome::Rejected
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 6001, "peer-hist-1"))
+            .await;
+        engine.answer_call(false).await.unwrap();
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+
+        // 2. Incoming call ring timeout -> CallOutcome::Missed
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 6002, "peer-hist-1"))
+            .await;
+        tokio::time::sleep(Duration::from_millis(160)).await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+
+        {
+            let captured = events.lock().unwrap();
+            assert!(captured.iter().any(|ev| matches!(
+                ev,
+                CoreEvent::CallHistoryRecorded { thread_id, msg }
+                    if thread_id == "peer-hist-1"
+                        && msg.id == "call_6001"
+                        && msg.kind == MessageKind::Call
+                        && msg.call_outcome == Some(CallOutcome::Rejected)
+            )));
+            assert!(captured.iter().any(|ev| matches!(
+                ev,
+                CoreEvent::CallHistoryRecorded { thread_id, msg }
+                    if thread_id == "peer-hist-1"
+                        && msg.id == "call_6002"
+                        && msg.kind == MessageKind::Call
+                        && msg.call_outcome == Some(CallOutcome::Missed)
+            )));
+        }
+
+        let store = MessageStore::open(&db_str).unwrap();
+        let saved = store.messages_for("peer-hist-1", 10).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(saved
+            .iter()
+            .any(|m| m.msg_id == "call_6001" && m.msg_type == "chat.call"));
+        assert!(saved
+            .iter()
+            .any(|m| m.msg_id == "call_6002" && m.msg_type == "chat.call"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

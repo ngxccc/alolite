@@ -298,6 +298,66 @@ describe("coreEventRouter + feature domain invariants", () => {
     expect(useChatStore.getState().threads[0]?.messages).toHaveLength(0);
   });
 
+  it("appends CallHistoryRecorded messages to the target thread", () => {
+    useChatStore.getState().setThreads([
+      {
+        id: "u_1",
+        name: "Alice",
+        preview: "",
+        time: "10:00",
+        avatar: null,
+        is_group: false,
+        messages: [],
+        pinned_messages: [],
+        unread: {
+          last_seen_id: null,
+          unread_ids: [],
+          mention_ids: [],
+          muted: false,
+          muted_until: null,
+          marked_unread: false,
+        },
+        presentation: {
+          members: [],
+          member_count: null,
+          last_message_ts: 0,
+          last_message_id: "",
+          last_sender: "",
+          last_sender_id: "",
+          last_outgoing: false,
+          pinned: false,
+          muted: false,
+          hidden: false,
+        },
+      },
+    ]);
+
+    dispatchCoreEvent({
+      type: "CallHistoryRecorded",
+      payload: {
+        thread_id: "u_1",
+        msg: {
+          id: "call_777",
+          kind: "call",
+          sender: "Tôi",
+          text: "Cuộc gọi thoại (01:23)",
+          time: "12:00",
+          is_outgoing: true,
+          ts: 5000,
+          call_outcome: "completed",
+          call_duration_secs: 83,
+        },
+      },
+    });
+
+    const msgs = useChatStore.getState().threads[0]?.messages ?? [];
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.id).toBe("call_777");
+    expect(msgs[0]?.kind).toBe("call");
+    expect(msgs[0]?.call_outcome).toBe("completed");
+    expect(msgs[0]?.call_duration_secs).toBe(83);
+  });
+
   it("resets chat, contacts, call, and media cache on LoggedOut to isolate accounts", () => {
     useMediaCacheStore.getState().putMedia("img_1", "data:image/png;base64,abc");
     useContactsStore.getState().setFriendStatus("u_1", "Friend");
