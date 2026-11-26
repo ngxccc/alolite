@@ -347,6 +347,102 @@ impl ZRTPPacket {
         }
     }
 
+    /// Construct a `P2P.BIND` (`0x7f`, `kind = 1`) candidate probe packet.
+    pub fn p2p_bind(sender_role: u8, call_id: u32, seq: u16, cand_index: u32) -> Self {
+        Self::P2p {
+            magic: 0x00,
+            sender_role,
+            call_id,
+            kind: P2pKind::Bind,
+            body: P2pBody::Bind { seq, cand_index },
+        }
+    }
+
+    /// Construct a `P2P.BIND_PEER` (`0x7f`, `kind = 2`) binding response carrying reflex `"ip|port"`.
+    pub fn p2p_bind_peer(
+        sender_role: u8,
+        call_id: u32,
+        seq: u16,
+        cand_index: u32,
+        addr: impl Into<String>,
+    ) -> Self {
+        Self::P2p {
+            magic: 0x00,
+            sender_role,
+            call_id,
+            kind: P2pKind::BindPeer,
+            body: P2pBody::BindPeer {
+                seq,
+                cand_index,
+                addr: addr.into(),
+            },
+        }
+    }
+
+    /// Construct a `P2P.BIND_ANSWER` (`0x7f`, `kind = 3`) binding confirmation packet.
+    pub fn p2p_bind_answer(
+        sender_role: u8,
+        call_id: u32,
+        seq: u16,
+        cand_index: u32,
+        addr: impl Into<String>,
+    ) -> Self {
+        Self::P2p {
+            magic: 0x00,
+            sender_role,
+            call_id,
+            kind: P2pKind::BindAnswer,
+            body: P2pBody::BindAnswer {
+                seq,
+                cand_index,
+                addr: addr.into(),
+            },
+        }
+    }
+
+    /// Construct a `P2P.KEEPALIVE` (`0x7f`, `kind = 4`, `subCmd`: `1` = ping, `2` = pong) packet.
+    pub fn p2p_keepalive(
+        sender_role: u8,
+        call_id: u32,
+        sub_cmd: u8,
+        seq: u32,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self::P2p {
+            magic: 0x00,
+            sender_role,
+            call_id,
+            kind: P2pKind::Keepalive,
+            body: P2pBody::Keepalive {
+                sub_cmd,
+                seq,
+                payload,
+            },
+        }
+    }
+
+    /// Construct a `P2P.AUDIO` (`0x7f`, `kind = 6`) direct SRTP audio media packet.
+    pub fn p2p_audio(sender_role: u8, call_id: u32, srtp_payload: Vec<u8>) -> Self {
+        Self::P2p {
+            magic: 0x00,
+            sender_role,
+            call_id,
+            kind: P2pKind::Audio,
+            body: P2pBody::Media(srtp_payload),
+        }
+    }
+
+    /// Construct a `P2P.AUDIO_RTCP` (`0x7f`, `kind = 7`) direct RTCP packet.
+    pub fn p2p_audio_rtcp(sender_role: u8, call_id: u32, rtcp_payload: Vec<u8>) -> Self {
+        Self::P2p {
+            magic: 0x00,
+            sender_role,
+            call_id,
+            kind: P2pKind::AudioRtcp,
+            body: P2pBody::Media(rtcp_payload),
+        }
+    }
+
     /// Serialize this packet into wire UDP bytes.
     pub fn encode(&self) -> Vec<u8> {
         match self {
@@ -1017,5 +1113,21 @@ mod tests {
         assert!(ZRTPPacket::decode(&[0x01, 0x00]).is_err());
         assert!(ZRTPPacket::decode(&[0x7f, 0x00, 0x00]).is_err());
         assert!(ZRTPPacket::decode(&[0x99, 0x00]).is_err());
+    }
+
+    #[test]
+    fn p2p_helper_constructors_encode_expected_kinds_and_roundtrip() {
+        let pkts = vec![
+            ZRTPPacket::p2p_bind(0, 42, 1, 0),
+            ZRTPPacket::p2p_bind_peer(1, 42, 1, 0, "198.51.100.1|50000"),
+            ZRTPPacket::p2p_bind_answer(0, 42, 1, 0, "198.51.100.2|50001"),
+            ZRTPPacket::p2p_keepalive(0, 42, 1, 7, vec![1, 2]),
+            ZRTPPacket::p2p_audio(0, 42, vec![0x80, 0xef, 0x00, 0x01]),
+            ZRTPPacket::p2p_audio_rtcp(1, 42, vec![0x80, 0xc8, 0x00, 0x06]),
+        ];
+        for pkt in pkts {
+            let wire = pkt.encode();
+            assert_eq!(ZRTPPacket::decode(&wire).unwrap(), pkt);
+        }
     }
 }

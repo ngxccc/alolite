@@ -4,7 +4,7 @@
 //! `INV-9` (`CallManager` lives outside `CoreEngine::session` mutex), and `EDGE-5`
 //! (headless mode ignores `401` invites and never opens local audio devices).
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -16,13 +16,16 @@ use tokio::sync::mpsc;
 use super::CoreEngine;
 use crate::clock::{now_ms, unix_now};
 use crate::core::events::{CallPhase, CoreEvent};
+use crate::protocol::call::p2p::{P2pController, P2pOutbound, P2pRxOutcome};
 use crate::protocol::call::signaling::{
     answer_call, cancel_call, end_call as send_end_call_http, hold_request, log_end_call,
     request_call, send_answer_ack, send_conf, send_request, send_ring_ring, unhold_request,
     CallSignalCode, CallSignalWireData, ExtendData, RelayServerAddr, SrtpKeyMaterial,
 };
 use crate::protocol::call::srtp::SrtpContext;
-use crate::protocol::call::zrtp::{ControlBody, ZRTPPacket, ZrtpCmd};
+use crate::protocol::call::zrtp::{
+    ControlBody, ReqForwardSubCmd, ZRTPPacket, ZrtpCmd, MSG_AUDIO_RTP_DOWN,
+};
 use crate::protocol::call::{
     CallDirection, CallEffect, CallEndReason, CallEvent, CallSession, CallState,
 };
@@ -68,6 +71,7 @@ struct CallManagerState {
     peer_name: Option<String>,
     peer_avatar: Option<String>,
     relay_servers: Vec<RelayServerAddr>,
+    p2p_candidates: Vec<SocketAddr>,
     srtp_key: Option<SrtpKeyMaterial>,
     started_at_ms: Option<i64>,
     ring_timer_task: Option<tokio::task::JoinHandle<()>>,
@@ -212,6 +216,7 @@ impl CoreEngine {
             .unwrap_or_else(|| format!("sess-{call_id}"));
         let srtp_mode = resp.parsed_extend_data().srtp_mode;
         let relays = resp.relay_servers();
+        let p2p_cands = resp.p2p_candidates();
         let srtp_key = resp.srtp_key_material();
 
         let (resolved_name, resolved_avatar) =
@@ -226,6 +231,7 @@ impl CoreEngine {
             g.peer_name = resolved_name;
             g.peer_avatar = resolved_avatar;
             g.relay_servers = relays;
+            g.p2p_candidates = p2p_cands;
             g.srtp_key = srtp_key;
             g.started_at_ms = None;
             g.session.apply(CallEvent::StartOutgoing {
@@ -367,6 +373,7 @@ impl CoreEngine {
                     .unwrap_or_else(|| format!("sess-{call_id}"));
                 let srtp_mode = signal.parsed_extend_data().srtp_mode;
                 let relays = signal.relay_servers();
+                let p2p_cands = signal.p2p_candidates();
                 let srtp_key = signal.srtp_key_material();
                 let (resolved_name, resolved_avatar) = self.resolve_call_peer(&peer_id, None, None);
 
@@ -388,6 +395,7 @@ impl CoreEngine {
                             g.peer_name = resolved_name;
                             g.peer_avatar = resolved_avatar;
                             g.relay_servers = relays;
+                            g.p2p_candidates = p2p_cands;
                             g.srtp_key = srtp_key;
                             g.started_at_ms = None;
                         }
@@ -409,6 +417,7 @@ impl CoreEngine {
             CallSignalCode::Answer => {
                 let accepted = signal.status_i64().unwrap_or(0) == 0;
                 let relays = signal.relay_servers();
+                let p2p_cands = signal.p2p_candidates();
                 let srtp_key = signal.srtp_key_material();
                 let mut g = self
                     .call_manager
@@ -418,6 +427,9 @@ impl CoreEngine {
                 if accepted {
                     if !relays.is_empty() {
                         g.relay_servers = relays;
+                    }
+                    if !p2p_cands.is_empty() {
+                        g.p2p_candidates = p2p_cands;
                     }
                     if srtp_key.is_some() {
                         g.srtp_key = srtp_key;
@@ -602,6 +614,7 @@ impl CoreEngine {
                 g.peer_name = None;
                 g.peer_avatar = None;
                 g.relay_servers.clear();
+                g.p2p_candidates.clear();
                 g.srtp_key = None;
                 g.started_at_ms = None;
                 (cid, sid, pid, dur, effs)
@@ -753,7 +766,7 @@ impl CoreEngine {
             return;
         }
 
-        let (call_id, sess_id, peer_id, is_caller, relays, srtp_key) = {
+        let (call_id, sess_id, peer_id, is_caller, relays, p2p_cands, srtp_key) = {
             let g = self
                 .call_manager
                 .state
@@ -765,6 +778,7 @@ impl CoreEngine {
                 g.session.peer_id().unwrap_or_default().to_string(),
                 g.session.direction() == Some(CallDirection::Outgoing),
                 g.relay_servers.clone(),
+                g.p2p_candidates.clone(),
                 g.srtp_key.clone(),
             )
         };
@@ -869,10 +883,37 @@ impl CoreEngine {
             let mut encoder = create_opus_encoder();
             let mut opus_out_buf = [0u8; 512];
             let mut neteq = create_neteq();
+            let mut p2p =
+                P2pController::new(is_caller, call_id, uid, server_token, sess_id.clone());
+            if let Some(ip) = probe_local_ipv4() {
+                let _ = p2p.on_local_ip_probe(ip, now_ms());
+            }
+            if !p2p_cands.is_empty() {
+                let probes = p2p.add_candidates(p2p_cands);
+                dispatch_p2p_outbound(&socket, relay_addr, probes).await;
+            }
+            if let Some(target) = relay_addr {
+                // Initial REQ_FORWARD subCmd=8 channel prime (`re-notes/16` §3).
+                let prime = ZRTPPacket::Control {
+                    is_reply: false,
+                    magic: 0x01,
+                    field02: 0,
+                    seq: 1,
+                    uid,
+                    token: server_token,
+                    cmd: ZrtpCmd::ReqForward as u16,
+                    sub_cmd: ReqForwardSubCmd::ChannelPrime as u8,
+                    body: ControlBody::ForwardPrime([4, 0, 0, 0, 0, 0, 0, 0]),
+                };
+                let _ = socket.send_to(&prime.encode(), target).await;
+            }
+
             let mut rtp_seq: u16 = 1;
             let mut last_rx_at = Instant::now();
             let mut recv_buf = [0u8; 2048];
             let mut ping_tick = tokio::time::interval(Duration::from_secs(5));
+            let mut route_probe_tick = tokio::time::interval(Duration::from_secs(1));
+            let mut change_addr_tick = tokio::time::interval(Duration::from_millis(500));
             let mut watchdog_tick = tokio::time::interval(Duration::from_millis(200));
 
             loop {
@@ -894,47 +935,82 @@ impl CoreEngine {
                         }
                     }
                     Some(pcm) = rx_pcm_up.recv() => {
-                        if let Some(target) = relay_addr {
-                            if !muted_flag.load(Ordering::Relaxed) {
-                                if let Ok(enc_len) = encoder.encode(&pcm, &mut opus_out_buf) {
-                                    if enc_len > 0 {
-                                        let rtp_pkt = build_minimal_rtp(rtp_seq, &opus_out_buf[..enc_len]);
-                                        rtp_seq = rtp_seq.wrapping_add(1);
-                                        let wire_rtp = if let Some(ctx) = srtp_tx.as_mut() {
-                                            ctx.protect_rtp(&rtp_pkt).unwrap_or(rtp_pkt)
-                                        } else {
-                                            rtp_pkt
-                                        };
-                                        let pkt = ZRTPPacket::RelayMediaUp {
-                                            msg_type: crate::protocol::call::zrtp::MSG_AUDIO_RTP_UP,
-                                            server_token,
-                                            payload: wire_rtp,
-                                        };
-                                        let _ = socket.send_to(&pkt.encode(), target).await;
-                                    }
+                        if (relay_addr.is_some() || p2p.active_peer().is_some())
+                            && !muted_flag.load(Ordering::Relaxed)
+                        {
+                            if let Ok(enc_len) = encoder.encode(&pcm, &mut opus_out_buf) {
+                                if enc_len > 0 {
+                                    let rtp_pkt = build_minimal_rtp(rtp_seq, &opus_out_buf[..enc_len]);
+                                    rtp_seq = rtp_seq.wrapping_add(1);
+                                    let wire_rtp = if let Some(ctx) = srtp_tx.as_mut() {
+                                        ctx.protect_rtp(&rtp_pkt).unwrap_or(rtp_pkt)
+                                    } else {
+                                        rtp_pkt
+                                    };
+                                    let outbound = p2p.build_outbound_audio(wire_rtp);
+                                    dispatch_p2p_outbound(&socket, relay_addr, vec![outbound]).await;
                                 }
                             }
                         }
                     }
-                    Ok((n, _src)) = socket.recv_from(&mut recv_buf) => {
+                    Ok((n, src)) = socket.recv_from(&mut recv_buf) => {
                         last_rx_at = Instant::now();
-                        if let Ok(ZRTPPacket::RelayMediaDown { payload, .. }) = ZRTPPacket::decode(&recv_buf[..n]) {
-                            let plain_rtp = if let Some(ctx) = srtp_rx.as_mut() {
-                                match ctx.unprotect_rtp(&payload) {
-                                    Ok(p) => p,
-                                    Err(_) => continue, // ADV-3: drop bad SRTP HMAC
-                                }
-                            } else {
-                                payload
-                            };
-                            if plain_rtp.len() >= 12 {
-                                let seq = u16::from_be_bytes([plain_rtp[2], plain_rtp[3]]);
-                                neteq.push(seq, plain_rtp[12..].to_vec());
-                                let mut out_pcm = [0i16; FRAME_SAMPLES];
-                                if neteq.pop_frame(&mut out_pcm).is_ok() {
-                                    let _ = tx_pcm_down.try_send(out_pcm);
+                        match ZRTPPacket::decode(&recv_buf[..n]) {
+                            Ok(ZRTPPacket::RelayMediaDown { msg_type, payload }) => {
+                                if msg_type == MSG_AUDIO_RTP_DOWN
+                                    && decode_and_queue_audio(
+                                        &payload,
+                                        srtp_rx.as_mut(),
+                                        &mut neteq,
+                                        &tx_pcm_down,
+                                    )
+                                {
+                                    p2p.on_relay_audio_received(now_ms());
                                 }
                             }
+                            Ok(ZRTPPacket::P2p {
+                                sender_role,
+                                call_id: pkt_call_id,
+                                kind,
+                                body,
+                                ..
+                            }) => {
+                                let (outcome, replies) = p2p.handle_p2p_packet(
+                                    src,
+                                    sender_role,
+                                    pkt_call_id,
+                                    kind,
+                                    body,
+                                    now_ms(),
+                                );
+                                dispatch_p2p_outbound(&socket, relay_addr, replies).await;
+                                if let P2pRxOutcome::AudioMedia(payload) = outcome {
+                                    decode_and_queue_audio(
+                                        &payload,
+                                        srtp_rx.as_mut(),
+                                        &mut neteq,
+                                        &tx_pcm_down,
+                                    );
+                                }
+                            }
+                            Ok(ZRTPPacket::Control {
+                                is_reply,
+                                cmd,
+                                sub_cmd,
+                                token,
+                                ..
+                            }) => {
+                                if is_reply {
+                                    if token != 0 {
+                                        server_token = token;
+                                    }
+                                    p2p.on_server_reply(cmd, token);
+                                } else if cmd == ZrtpCmd::ReqForward as u16 {
+                                    let replies = p2p.on_req_forward(sub_cmd);
+                                    dispatch_p2p_outbound(&socket, relay_addr, replies).await;
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     _ = ping_tick.tick() => {
@@ -942,6 +1018,16 @@ impl CoreEngine {
                             let ping = ZRTPPacket::ping(0, uid, server_token, sess_id.clone());
                             let _ = socket.send_to(&ping.encode(), target).await;
                         }
+                    }
+                    _ = route_probe_tick.tick() => {
+                        if let Some(ip) = probe_local_ipv4() {
+                            let pkts = p2p.on_local_ip_probe(ip, now_ms());
+                            dispatch_p2p_outbound(&socket, relay_addr, pkts).await;
+                        }
+                    }
+                    _ = change_addr_tick.tick() => {
+                        let pkts = p2p.on_change_address_tick(now_ms());
+                        dispatch_p2p_outbound(&socket, relay_addr, pkts).await;
                     }
                     _ = watchdog_tick.tick() => {
                         if last_rx_at.elapsed() >= watchdog_timeout {
@@ -1041,6 +1127,61 @@ fn build_minimal_rtp(seq: u16, payload: &[u8]) -> Vec<u8> {
     rtp.extend_from_slice(&1u32.to_be_bytes());
     rtp.extend_from_slice(payload);
     rtp
+}
+
+fn decode_and_queue_audio(
+    payload: &[u8],
+    srtp_rx: Option<&mut SrtpContext>,
+    neteq: &mut NetEq<Box<dyn OpusDecoderBackend>>,
+    tx_pcm_down: &mpsc::Sender<[i16; FRAME_SAMPLES]>,
+) -> bool {
+    let plain_rtp = if let Some(ctx) = srtp_rx {
+        match ctx.unprotect_rtp(payload) {
+            Ok(p) => p,
+            Err(_) => return false, // ADV-3: drop bad SRTP HMAC
+        }
+    } else {
+        payload.to_vec()
+    };
+    if plain_rtp.len() >= 12 {
+        let seq = u16::from_be_bytes([plain_rtp[2], plain_rtp[3]]);
+        neteq.push(seq, plain_rtp[12..].to_vec());
+        let mut out_pcm = [0i16; FRAME_SAMPLES];
+        if neteq.pop_frame(&mut out_pcm).is_ok() {
+            let _ = tx_pcm_down.try_send(out_pcm);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+async fn dispatch_p2p_outbound(
+    socket: &UdpSocket,
+    relay_addr: Option<SocketAddr>,
+    pkts: Vec<P2pOutbound>,
+) {
+    for item in pkts {
+        match item {
+            P2pOutbound::ToPeer(addr, pkt) => {
+                let _ = socket.send_to(&pkt.encode(), addr).await;
+            }
+            P2pOutbound::ToRelay(pkt) => {
+                if let Some(relay) = relay_addr {
+                    let _ = socket.send_to(&pkt.encode(), relay).await;
+                }
+            }
+        }
+    }
+}
+
+fn probe_local_ipv4() -> Option<Ipv4Addr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:53").ok()?;
+    match sock.local_addr().ok()? {
+        SocketAddr::V4(v4) => Some(*v4.ip()),
+        SocketAddr::V6(_) => None,
+    }
 }
 
 fn create_opus_encoder() -> Box<dyn OpusEncoderBackend> {
@@ -1288,6 +1429,97 @@ mod tests {
         engine
             .handle_voip_signal(&s_snap, test_signal(409, 5001, "peer-1"))
             .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+    }
+
+    #[tokio::test]
+    async fn media_loop_responds_to_0x7f_p2p_bind_and_accepts_direct_audio() {
+        let peer_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer_sock.local_addr().unwrap();
+
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_millis(500),
+            Duration::from_millis(20),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        // Incoming 401 with peer_sock as P2P candidate.
+        let sig = CallSignalWireData::from_value(&json!({
+            "cmd": 401,
+            "callId": 6001,
+            "sessId": "sess-6001",
+            "callerId": "peer-1",
+            "calleeId": "self-1",
+            "isVideo": 0,
+            "extendData": {
+                "srtpMode": 1,
+                "maxFT": 60,
+                "extraInfo": { "p2pAddr": format!("{}|{}", peer_addr.ip(), peer_addr.port()) }
+            }
+        }));
+        engine.handle_voip_signal(&s_snap, sig).await;
+        engine.answer_call(true).await.unwrap();
+
+        // Peer receives P2P.BIND (0x7f kind=1) from our media loop.
+        let mut buf = [0u8; 256];
+        let (n, engine_addr) =
+            tokio::time::timeout(Duration::from_secs(2), peer_sock.recv_from(&mut buf))
+                .await
+                .expect("timed out waiting for P2P.BIND")
+                .unwrap();
+        let pkt = ZRTPPacket::decode(&buf[..n]).unwrap();
+        assert!(matches!(
+            pkt,
+            ZRTPPacket::P2p {
+                call_id: 6001,
+                kind: crate::protocol::call::P2pKind::Bind,
+                ..
+            }
+        ));
+
+        // Peer sends BindPeer (kind=2) -> engine responds with BindAnswer (kind=3) + Signal(Start).
+        let bind_peer = ZRTPPacket::p2p_bind_peer(
+            0,
+            6001,
+            1,
+            0,
+            format!("{}|{}", engine_addr.ip(), engine_addr.port()),
+        );
+        peer_sock
+            .send_to(&bind_peer.encode(), engine_addr)
+            .await
+            .unwrap();
+
+        let (n2, _) = tokio::time::timeout(Duration::from_secs(2), peer_sock.recv_from(&mut buf))
+            .await
+            .expect("timed out waiting for P2P.BIND_ANSWER")
+            .unwrap();
+        let ans = ZRTPPacket::decode(&buf[..n2]).unwrap();
+        assert!(matches!(
+            ans,
+            ZRTPPacket::P2p {
+                call_id: 6001,
+                kind: crate::protocol::call::P2pKind::BindAnswer,
+                ..
+            }
+        ));
+
+        // Peer sends direct P2P audio (kind=6) -> keeps watchdog alive and does not crash.
+        let rtp = build_minimal_rtp(1, &[0xf8, 0xff, 0xfe]);
+        let p2p_audio = ZRTPPacket::p2p_audio(0, 6001, rtp);
+        peer_sock
+            .send_to(&p2p_audio.encode(), engine_addr)
+            .await
+            .unwrap();
+
+        engine.end_call().await.unwrap();
         assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
     }
 }
