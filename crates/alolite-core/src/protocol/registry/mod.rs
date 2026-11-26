@@ -556,6 +556,38 @@ pub mod social {
         CommandSpec::new(12411, ApiDomain::Reaction, "/api/group/reaction");
 }
 
+/// 1-1 VoIP signaling endpoints (`ApiDomain::VoiceCall`).
+pub mod voice_call {
+    use super::{ApiDomain, CommandSpec};
+
+    pub const REQUEST_CALL: CommandSpec =
+        CommandSpec::new(11300, ApiDomain::VoiceCall, "/api/voicecall/requestcall");
+    pub const REQUEST: CommandSpec =
+        CommandSpec::new(11301, ApiDomain::VoiceCall, "/api/voicecall/request");
+    pub const RING_RING: CommandSpec =
+        CommandSpec::new(11302, ApiDomain::VoiceCall, "/api/voicecall/ringring");
+    pub const ANSWER: CommandSpec =
+        CommandSpec::new(11303, ApiDomain::VoiceCall, "/api/voicecall/answer");
+    pub const ANSWER_ACK: CommandSpec =
+        CommandSpec::new(11304, ApiDomain::VoiceCall, "/api/voicecall/answerack");
+    pub const CANCEL: CommandSpec =
+        CommandSpec::new(11305, ApiDomain::VoiceCall, "/api/voicecall/cancel");
+    pub const END_CALL: CommandSpec =
+        CommandSpec::new(11306, ApiDomain::VoiceCall, "/api/voicecall/endcall");
+    pub const HOLD_REQ: CommandSpec =
+        CommandSpec::new(11307, ApiDomain::VoiceCall, "/api/voicecall/holdreq");
+    pub const HOLD_RESP: CommandSpec =
+        CommandSpec::new(11308, ApiDomain::VoiceCall, "/api/voicecall/holdresp");
+    pub const UNHOLD_REQ: CommandSpec =
+        CommandSpec::new(11309, ApiDomain::VoiceCall, "/api/voicecall/unholdreq");
+    pub const UNHOLD_RESP: CommandSpec =
+        CommandSpec::new(11310, ApiDomain::VoiceCall, "/api/voicecall/unholdresp");
+    pub const LOG_END_CALL: CommandSpec =
+        CommandSpec::new(11311, ApiDomain::VoiceCall, "/api/voicecall/logendcall");
+    pub const CONF: CommandSpec =
+        CommandSpec::new(12006, ApiDomain::VoiceCall, "/api/voicecall/conf");
+}
+
 // ---------------------------------------------------------------------------
 // Complete WebSocket Frame `cmd` & Close-Code Catalog (`re-notes/12` & `13`)
 // ---------------------------------------------------------------------------
