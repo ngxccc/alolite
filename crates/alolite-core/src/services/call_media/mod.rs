@@ -5,7 +5,10 @@
 //! Default builds provide [`NullAudioBackend`] and [`NullOpusCodec`] so headless and
 //! non-call builds stay green without native audio headers.
 
+#[cfg(feature = "call")]
+pub mod apm;
 pub mod audio_backend;
+pub mod leveler;
 pub mod neteq;
 pub mod opus_codec;
 
@@ -24,12 +27,15 @@ pub const MAX_OPUS_FRAME_SAMPLES: usize = 1_920;
 /// PulseAudio playback `tlength` in bytes (`60 ms` = 3 frames of 320 `i16` samples = 1920 bytes).
 pub const PLAYBACK_TLENGTH_BYTES: u32 = 1_920;
 
-#[cfg(all(feature = "call", target_os = "linux"))]
-pub use audio_backend::PulseAudioBackend;
+#[cfg(feature = "call")]
+pub use apm::Apm;
 pub use audio_backend::{
     list_audio_devices, normalize_device_id, AudioBackend, AudioDeviceInfo, AudioDeviceKind,
     AudioDeviceList, NullAudioBackend,
 };
+#[cfg(all(feature = "call", target_os = "linux"))]
+pub use audio_backend::{PulseAudioBackend, PulseCapture, PulsePlayback};
+pub use leveler::{AudioLeveler, LevelerConfig};
 pub use neteq::{NetEq, NetEqConfig, PopOutcome};
 #[cfg(feature = "call")]
 pub use opus_codec::{LibOpusDecoder, LibOpusEncoder};

@@ -100,6 +100,11 @@ pub trait AudioBackend: Send {
     /// # Errors
     /// Returns an error if `pcm.len() != FRAME_SAMPLES` or the underlying audio stream fails.
     fn write_frame(&mut self, pcm: &[i16]) -> Result<()>;
+
+    /// Combined playback + capture stream latency in milliseconds, if supported by the backend.
+    fn total_latency_ms(&self) -> Option<i32> {
+        None
+    }
 }
 
 /// No-op audio backend for headless (`--mcp` / `--api-only`) and default non-`call` builds.
@@ -171,6 +176,55 @@ impl AudioBackend for NullAudioBackend {
         self.frames_written += 1;
         Ok(())
     }
+}
+
+/// Disambiguate duplicate PulseAudio/PipeWire device descriptions (e.g. multiple HDMI outputs
+/// sharing `"Radeon High Definition Audio Controller"`) and mark the system default device.
+pub fn disambiguate_device_names(devices: &mut [AudioDeviceInfo]) {
+    use std::collections::HashMap;
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for d in devices.iter() {
+        *counts.entry(d.name.clone()).or_insert(0) += 1;
+    }
+
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for d in devices.iter_mut() {
+        let total = counts.get(&d.name).copied().unwrap_or(1);
+        if total > 1 {
+            let idx = seen.entry(d.name.clone()).or_insert(0);
+            *idx += 1;
+            let suffix = device_id_hint(&d.id).unwrap_or_else(|| format!("#{idx}"));
+            d.name = format!("{} ({suffix})", d.name);
+        }
+        if d.is_default && !d.name.contains("Mặc định") {
+            d.name = format!("{} · Mặc định", d.name);
+        }
+    }
+}
+
+fn device_id_hint(id: &str) -> Option<String> {
+    let lower = id.to_ascii_lowercase();
+    if let Some(pos) = lower.rfind("hdmi-stereo-extra") {
+        let rest = &lower[pos + "hdmi-stereo-extra".len()..];
+        let num: usize = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        return Some(format!("HDMI {}", num + 1));
+    }
+    if lower.contains("hdmi-stereo") || lower.contains(".hdmi") {
+        return Some("HDMI 1".to_string());
+    }
+    if lower.contains("analog-stereo") {
+        return Some("Analog".to_string());
+    }
+    if lower.contains("iec958") || lower.contains("spdif") {
+        return Some("S/PDIF".to_string());
+    }
+    None
 }
 
 #[cfg(all(feature = "call", target_os = "linux"))]
@@ -308,6 +362,7 @@ mod pulse {
             bytes: usize,
             error: *mut c_int,
         ) -> c_int;
+        fn pa_simple_get_latency(s: *mut PaSimple, error: *mut c_int) -> u64;
         fn pa_strerror(error: c_int) -> *const c_char;
     }
 
@@ -321,6 +376,174 @@ mod pulse {
         unsafe { CStr::from_ptr(ptr) }
             .to_string_lossy()
             .into_owned()
+    }
+
+    /// Independent `libpulse-simple` playback stream.
+    pub struct PulsePlayback {
+        raw: *mut PaSimple,
+    }
+
+    // SAFETY: `pa_simple` handle is owned exclusively by `PulsePlayback` and moved to one audio thread (`INV-9`).
+    unsafe impl Send for PulsePlayback {}
+
+    impl PulsePlayback {
+        /// Open a PulseAudio/PipeWire playback stream on `playback_dev` (`None` = system default).
+        ///
+        /// # Errors
+        /// Returns an error if PulseAudio rejects the stream or `playback_dev` has an interior NUL.
+        pub fn open(playback_dev: Option<&str>) -> Result<Self> {
+            let app_name = CString::new("AloLite").expect("static string");
+            let pb_stream = CString::new("ZRTC Playback").expect("static string");
+            let pb_dev_c = playback_dev.map(CString::new).transpose()?;
+            let ss = PulseAudioBackend::sample_spec();
+            let pb_attr = PulseAudioBackend::playback_buffer_attr();
+            let mut err: c_int = 0;
+            // SAFETY: All pointers are valid for the duration of `pa_simple_new`, and `err` is initialized.
+            let raw = unsafe {
+                pa_simple_new(
+                    std::ptr::null(),
+                    app_name.as_ptr(),
+                    PA_STREAM_PLAYBACK,
+                    pb_dev_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                    pb_stream.as_ptr(),
+                    &ss,
+                    std::ptr::null(),
+                    &pb_attr,
+                    &mut err,
+                )
+            };
+            if raw.is_null() {
+                anyhow::bail!(
+                    "failed to open PulseAudio playback stream: {}",
+                    pa_error_string(err)
+                );
+            }
+            Ok(Self { raw })
+        }
+
+        /// Write one 20 ms mono PCM frame (`320` samples) to the speaker.
+        ///
+        /// # Errors
+        /// Returns an error if `pcm.len() != FRAME_SAMPLES` or `pa_simple_write` fails.
+        pub fn write_frame(&mut self, pcm: &[i16]) -> Result<()> {
+            if pcm.len() != FRAME_SAMPLES {
+                anyhow::bail!(
+                    "expected {FRAME_SAMPLES} PCM samples for playback, got {}",
+                    pcm.len()
+                );
+            }
+            let bytes = std::mem::size_of_val(pcm);
+            let mut err: c_int = 0;
+            // SAFETY: `self.raw` is valid and `pcm` is readable for `bytes` bytes.
+            let rc = unsafe {
+                pa_simple_write(self.raw, pcm.as_ptr().cast::<c_void>(), bytes, &mut err)
+            };
+            if rc < 0 {
+                anyhow::bail!("PulseAudio write failed: {}", pa_error_string(err));
+            }
+            Ok(())
+        }
+
+        /// Measured playback stream latency in microseconds.
+        pub fn latency_us(&self) -> Option<u64> {
+            let mut err: c_int = 0;
+            // SAFETY: `self.raw` is a valid live `pa_simple` handle.
+            let us = unsafe { pa_simple_get_latency(self.raw, &mut err) };
+            (err == 0).then_some(us)
+        }
+    }
+
+    impl Drop for PulsePlayback {
+        fn drop(&mut self) {
+            if !self.raw.is_null() {
+                // SAFETY: `self.raw` is owned by `self` and freed once.
+                unsafe { pa_simple_free(self.raw) };
+            }
+        }
+    }
+
+    /// Independent `libpulse-simple` capture stream.
+    pub struct PulseCapture {
+        raw: *mut PaSimple,
+    }
+
+    // SAFETY: `pa_simple` handle is owned exclusively by `PulseCapture` and moved to one audio thread (`INV-9`).
+    unsafe impl Send for PulseCapture {}
+
+    impl PulseCapture {
+        /// Open a PulseAudio/PipeWire capture stream on `capture_dev` (`None` = system default).
+        ///
+        /// # Errors
+        /// Returns an error if PulseAudio rejects the stream or `capture_dev` has an interior NUL.
+        pub fn open(capture_dev: Option<&str>) -> Result<Self> {
+            let app_name = CString::new("AloLite").expect("static string");
+            let cap_stream = CString::new("ZRTC Capture").expect("static string");
+            let cap_dev_c = capture_dev.map(CString::new).transpose()?;
+            let ss = PulseAudioBackend::sample_spec();
+            let cap_attr = PulseAudioBackend::capture_buffer_attr();
+            let mut err: c_int = 0;
+            // SAFETY: All pointers are valid for the duration of `pa_simple_new`, and `err` is initialized.
+            let raw = unsafe {
+                pa_simple_new(
+                    std::ptr::null(),
+                    app_name.as_ptr(),
+                    PA_STREAM_RECORD,
+                    cap_dev_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                    cap_stream.as_ptr(),
+                    &ss,
+                    std::ptr::null(),
+                    &cap_attr,
+                    &mut err,
+                )
+            };
+            if raw.is_null() {
+                anyhow::bail!(
+                    "failed to open PulseAudio capture stream: {}",
+                    pa_error_string(err)
+                );
+            }
+            Ok(Self { raw })
+        }
+
+        /// Read one 20 ms mono PCM frame (`320` samples) from the microphone.
+        ///
+        /// # Errors
+        /// Returns an error if `pcm.len() != FRAME_SAMPLES` or `pa_simple_read` fails.
+        pub fn read_frame(&mut self, pcm: &mut [i16]) -> Result<()> {
+            if pcm.len() != FRAME_SAMPLES {
+                anyhow::bail!(
+                    "expected {FRAME_SAMPLES} PCM samples for capture, got {}",
+                    pcm.len()
+                );
+            }
+            let bytes = std::mem::size_of_val(pcm);
+            let mut err: c_int = 0;
+            // SAFETY: `self.raw` is valid and `pcm` is writable for `bytes` bytes.
+            let rc = unsafe {
+                pa_simple_read(self.raw, pcm.as_mut_ptr().cast::<c_void>(), bytes, &mut err)
+            };
+            if rc < 0 {
+                anyhow::bail!("PulseAudio read failed: {}", pa_error_string(err));
+            }
+            Ok(())
+        }
+
+        /// Measured capture stream latency in microseconds.
+        pub fn latency_us(&self) -> Option<u64> {
+            let mut err: c_int = 0;
+            // SAFETY: `self.raw` is a valid live `pa_simple` handle.
+            let us = unsafe { pa_simple_get_latency(self.raw, &mut err) };
+            (err == 0).then_some(us)
+        }
+    }
+
+    impl Drop for PulseCapture {
+        fn drop(&mut self) {
+            if !self.raw.is_null() {
+                // SAFETY: `self.raw` is owned by `self` and freed once.
+                unsafe { pa_simple_free(self.raw) };
+            }
+        }
     }
 
     /// Linux `libpulse-simple` duplex audio backend paced by the hardware sample clock.
@@ -355,6 +578,19 @@ mod pulse {
             }
         }
 
+        /// Build the capture `pa_buffer_attr` with `fragsize = 640` (20 ms) so
+        /// `pa_simple_read` does not inherit PulseAudio's 2-second default record buffer.
+        pub(super) fn capture_buffer_attr() -> PaBufferAttr {
+            let frame_bytes = (FRAME_SAMPLES * std::mem::size_of::<i16>()) as u32;
+            PaBufferAttr {
+                maxlength: frame_bytes * 4,
+                tlength: u32::MAX,
+                prebuf: u32::MAX,
+                minreq: u32::MAX,
+                fragsize: frame_bytes,
+            }
+        }
+
         /// Open duplex PulseAudio/PipeWire playback and capture streams.
         ///
         /// # Errors
@@ -369,6 +605,7 @@ mod pulse {
 
             let ss = Self::sample_spec();
             let pb_attr = Self::playback_buffer_attr();
+            let cap_attr = Self::capture_buffer_attr();
 
             let mut err: c_int = 0;
             // SAFETY: All pointers are valid for the duration of `pa_simple_new`, and `err` is initialized.
@@ -402,7 +639,7 @@ mod pulse {
                     cap_stream.as_ptr(),
                     &ss,
                     std::ptr::null(),
-                    std::ptr::null(),
+                    &cap_attr,
                     &mut err,
                 )
             };
@@ -612,7 +849,7 @@ mod pulse {
                 pa_mainloop_free(mainloop);
             }
 
-            let inputs = collect
+            let mut inputs: Vec<AudioDeviceInfo> = collect
                 .sources
                 .into_iter()
                 .map(|(id, name)| AudioDeviceInfo {
@@ -622,7 +859,7 @@ mod pulse {
                     kind: AudioDeviceKind::Input,
                 })
                 .collect();
-            let outputs = collect
+            let mut outputs: Vec<AudioDeviceInfo> = collect
                 .sinks
                 .into_iter()
                 .map(|(id, name)| AudioDeviceInfo {
@@ -632,6 +869,9 @@ mod pulse {
                     kind: AudioDeviceKind::Output,
                 })
                 .collect();
+
+            disambiguate_device_names(&mut inputs);
+            disambiguate_device_names(&mut outputs);
 
             Ok(AudioDeviceList { inputs, outputs })
         }
@@ -702,11 +942,25 @@ mod pulse {
             }
             Ok(())
         }
+
+        fn total_latency_ms(&self) -> Option<i32> {
+            let mut pb_err: c_int = 0;
+            let mut cap_err: c_int = 0;
+            // SAFETY: `self.playback` and `self.capture` are valid live `pa_simple` handles.
+            let pb_us = unsafe { pa_simple_get_latency(self.playback, &mut pb_err) };
+            // SAFETY: `self.capture` is a valid live `pa_simple` handle.
+            let cap_us = unsafe { pa_simple_get_latency(self.capture, &mut cap_err) };
+            if pb_err != 0 || cap_err != 0 {
+                return None;
+            }
+            let total_ms = (pb_us.saturating_add(cap_us) / 1000).min(500);
+            i32::try_from(total_ms).ok()
+        }
     }
 }
 
 #[cfg(all(feature = "call", target_os = "linux"))]
-pub use pulse::PulseAudioBackend;
+pub use pulse::{PulseAudioBackend, PulseCapture, PulsePlayback};
 
 #[cfg(test)]
 mod tests {
@@ -752,6 +1006,10 @@ mod tests {
         let ss = PulseAudioBackend::sample_spec();
         assert_eq!(ss.rate, 16_000);
         assert_eq!(ss.channels, 1);
+
+        let cap_attr = PulseAudioBackend::capture_buffer_attr();
+        assert_eq!(cap_attr.fragsize, 640);
+        assert_eq!(cap_attr.maxlength, 2560);
     }
 
     #[test]
@@ -778,6 +1036,43 @@ mod tests {
         assert_eq!(
             normalize_device_id(Some("alsa_input.pci")),
             Some("alsa_input.pci")
+        );
+    }
+
+    #[test]
+    fn disambiguate_device_names_distinguishes_duplicate_hdmi_outputs_and_marks_default() {
+        let mut outputs = vec![
+            AudioDeviceInfo {
+                id: "alsa_output.pci-0000_03_00.1.hdmi-stereo".to_string(),
+                name: "Radeon High Definition Audio Controller".to_string(),
+                kind: AudioDeviceKind::Output,
+                is_default: false,
+            },
+            AudioDeviceInfo {
+                id: "alsa_output.pci-0000_03_00.1.hdmi-stereo-extra1".to_string(),
+                name: "Radeon High Definition Audio Controller".to_string(),
+                kind: AudioDeviceKind::Output,
+                is_default: false,
+            },
+            AudioDeviceInfo {
+                id: "alsa_output.pci-0000_33_00.6.HiFi__Headphones__sink".to_string(),
+                name: "Ryzen HD Audio Controller Headphones".to_string(),
+                kind: AudioDeviceKind::Output,
+                is_default: true,
+            },
+        ];
+        disambiguate_device_names(&mut outputs);
+        assert_eq!(
+            outputs[0].name,
+            "Radeon High Definition Audio Controller (HDMI 1)"
+        );
+        assert_eq!(
+            outputs[1].name,
+            "Radeon High Definition Audio Controller (HDMI 2)"
+        );
+        assert_eq!(
+            outputs[2].name,
+            "Ryzen HD Audio Controller Headphones · Mặc định"
         );
     }
 }
