@@ -24,6 +24,7 @@ Ubiquitous language for `alolite`. Use these terms verbatim in issues, ADRs, tes
 | **Service map**      | Server-provided `zpw_service_map_v3` mapping logical services (`chat`, `group`, `file`, …) to hosts; managed by `Domains` (`src/protocol/session/domains.rs`) and `src/protocol/endpoints.rs`. | "host list"              |
 | **`error_code`**     | Numeric status inside Zalo JSON responses, classified into `SessionError` / `SessionStatus` (`src/protocol/session/status.rs`). `0` means success.                                             | "status"                 |
 | **Push / Pull**      | WebSocket message classes (`src/protocol/registry/ws.rs`): `501/521` push, `510/511` pull, `601–604` control.                                                                                  | "socket message"         |
+| **Poll cursor**      | Per-account long-poll watermark (`PollState`: `last_action_id`, `last_action_id_other`, and queue cursors) persisted in `Store` to resume `getChatFromPolling` without replaying from `"1"`.   | "sync token", "offset"   |
 
 ## Chat Domain
 
@@ -34,6 +35,7 @@ Ubiquitous language for `alolite`. Use these terms verbatim in issues, ADRs, tes
 | **Recall** | Server-side removal of a message for all participants (`messaging::send::recall_message`). | "delete" (that is local-only) |
 | **Delete for me** | Local-only removal (`messaging::send::delete_message_for_me`) mirrored into SQLite. | "recall" |
 | **ZDB4.0 / BinNet** | Mobile Sync V1 encrypted archive container (`sync::zdb4`) and SQLite attachment/quote TLV blob (`sync::bin_net`), ingested into SQLite by `storage::sync_ingest`. | "raw backup dump" |
+| **Read point** | Monotonic watermark (`last_seen_id` in `UnreadState`) marking the newest seen message in a thread. | "read receipt" (outbound action), "unread counter" |
 
 ## Runtime
 
@@ -73,3 +75,4 @@ Domain invariants are tagged `INV-N` here and referenced verbatim from code and 
 - **INV-3** — The UI thread never performs blocking I/O; all such work runs in the worker (SQLite & `ZDB4.0` unpacking execute on `spawn_blocking`).
 - **INV-4** — A message row is idempotent by `msg_id`; re-delivery never duplicates history.
 - **INV-5** — `crates/alolite-core/src/protocol/` remains pure protocol, crypto, and wire parsing; SQLite (`rusqlite`) and `threads_cache.json` persistence live strictly under `crates/alolite-core/src/storage/`.
+- **INV-6** — A thread's `last_seen_id` is monotonic (never regresses to an older numeric message ID), and `PollState` advances atomically in the same SQLite transaction as the ingested messages.
