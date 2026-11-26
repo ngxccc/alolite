@@ -11,6 +11,7 @@ export interface CallStateSnapshot {
   is_incoming: boolean;
   is_muted: boolean;
   is_held: boolean;
+  peer_muted?: boolean;
   started_at_ms: number | null;
   end_reason: string | null;
 }
@@ -24,6 +25,7 @@ interface CallStoreState {
   isIncoming: boolean;
   isMuted: boolean;
   isHeld: boolean;
+  peerMuted: boolean;
   startedAtMs: number | null;
   endReason: string | null;
   selectedMicId: string | null;
@@ -63,6 +65,7 @@ export const useCallStore = create<CallStoreState>()(
     isIncoming: false,
     isMuted: false,
     isHeld: false,
+    peerMuted: false,
     startedAtMs: null,
     endReason: null,
     selectedMicId: null,
@@ -86,6 +89,7 @@ export const useCallStore = create<CallStoreState>()(
         state.isIncoming = snap.is_incoming;
         state.isMuted = snap.is_muted;
         state.isHeld = snap.is_held;
+        state.peerMuted = snap.peer_muted ?? false;
         state.startedAtMs = snap.started_at_ms;
         state.endReason = snap.end_reason;
       }),
@@ -122,6 +126,7 @@ export const useCallStore = create<CallStoreState>()(
         state.isIncoming = false;
         state.isMuted = false;
         state.isHeld = false;
+        state.peerMuted = false;
         state.startedAtMs = null;
         state.endReason = null;
         state.micLevel = 0;

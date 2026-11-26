@@ -44,5 +44,27 @@ describe("call store and active call bar helpers", () => {
     expect(formatCallDuration(125.9)).toBe("02:05");
     const stop = startIncomingRingtone();
     expect(() => stop()).not.toThrow();
+    const stopMuted = startIncomingRingtone({ enabled: false, volumePct: 80 });
+    expect(() => stopMuted()).not.toThrow();
+  });
+
+  test("useCallStore tracks peerMuted from CallStateChanged snapshots", () => {
+    useCallStore.getState().resetCall();
+    useCallStore.getState().applyCallState({
+      phase: "active",
+      call_id: 901,
+      peer_id: "u1",
+      peer_name: "Alice",
+      peer_avatar: null,
+      is_incoming: false,
+      is_muted: false,
+      is_held: false,
+      peer_muted: true,
+      started_at_ms: 1000,
+      end_reason: null,
+    });
+    expect(useCallStore.getState().peerMuted).toBe(true);
+    useCallStore.getState().resetCall();
+    expect(useCallStore.getState().peerMuted).toBe(false);
   });
 });

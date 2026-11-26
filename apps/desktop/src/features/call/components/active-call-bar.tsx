@@ -42,6 +42,7 @@ export function ActiveCallBar() {
   const peerAvatar = useCallStore((s) => s.peerAvatar);
   const isIncoming = useCallStore((s) => s.isIncoming);
   const isMuted = useCallStore((s) => s.isMuted);
+  const peerMuted = useCallStore((s) => s.peerMuted);
   const startedAtMs = useCallStore((s) => s.startedAtMs);
   const selectedMicId = useCallStore((s) => s.selectedMicId);
   const selectedSpeakerId = useCallStore((s) => s.selectedSpeakerId);
@@ -194,6 +195,12 @@ export function ActiveCallBar() {
           >
             <PhoneCall className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span>{statusText}</span>
+            {peerMuted ? (
+              <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <MicOff className="h-2.5 w-2.5" aria-hidden="true" />
+                Đối phương tắt mic
+              </span>
+            ) : null}
           </div>
         </div>
       </div>

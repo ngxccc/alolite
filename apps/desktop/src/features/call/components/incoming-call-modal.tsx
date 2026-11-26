@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { UserAvatar } from "@/shared/ui/user-avatar";
-import { useCallStore, useMediaCacheStore, useUIStore } from "@/stores";
+import { useCallStore, useChatStore, useMediaCacheStore, useUIStore } from "@/stores";
 
 const noop = (): void => undefined;
 
@@ -26,7 +26,20 @@ function getAudioContextCtor(): typeof AudioContext | undefined {
   return typeof ctor === "function" ? ctor : undefined;
 }
 
-export function startIncomingRingtone(): () => void {
+export interface RingtoneOptions {
+  enabled?: boolean;
+  volumePct?: number;
+  singleBurst?: boolean;
+}
+
+export function startIncomingRingtone(options?: RingtoneOptions): () => void {
+  if (options?.enabled === false) {
+    return noop;
+  }
+  const clampedVol = Math.max(0, Math.min(100, options?.volumePct ?? 80));
+  if (clampedVol === 0) {
+    return noop;
+  }
   const AudioCtx = getAudioContextCtor();
   if (!AudioCtx) {
     return noop;
@@ -40,6 +53,7 @@ export function startIncomingRingtone(): () => void {
   }
 
   let stopped = false;
+  const peakGain = 0.08 * (clampedVol / 100);
   const playBurst = () => {
     if (stopped || ctx.state === "closed") {
       return;
@@ -53,7 +67,7 @@ export function startIncomingRingtone(): () => void {
       osc.frequency.setValueAtTime(540, now + 0.25);
 
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.04, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peakGain), now + 0.04);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
 
       osc.connect(gain);
@@ -66,6 +80,21 @@ export function startIncomingRingtone(): () => void {
   };
 
   playBurst();
+  if (options?.singleBurst) {
+    const closeTimer = window.setTimeout(() => {
+      stopped = true;
+      if (ctx.state !== "closed") {
+        void ctx.close().catch(noop);
+      }
+    }, 650);
+    return () => {
+      stopped = true;
+      window.clearTimeout(closeTimer);
+      if (ctx.state !== "closed") {
+        void ctx.close().catch(noop);
+      }
+    };
+  }
   const intervalId = window.setInterval(playBurst, 2200);
 
   return () => {
@@ -82,6 +111,8 @@ export function IncomingCallModal() {
   const peerId = useCallStore((s) => s.peerId);
   const peerName = useCallStore((s) => s.peerName);
   const peerAvatar = useCallStore((s) => s.peerAvatar);
+  const ringtoneEnabled = useChatStore((s) => s.settings?.call_ringtone_enabled ?? true);
+  const ringtoneVolumePct = useChatStore((s) => s.settings?.call_ringtone_volume_percent ?? 80);
   const mediaCache = useMediaCacheStore((s) => s.mediaCache);
   const showToast = useUIStore((s) => s.showToast);
   const stopRingtoneRef = useRef<(() => void) | null>(null);
@@ -95,7 +126,10 @@ export function IncomingCallModal() {
       stopRingtoneRef.current = null;
       return;
     }
-    const stop = startIncomingRingtone();
+    const stop = startIncomingRingtone({
+      enabled: ringtoneEnabled,
+      volumePct: ringtoneVolumePct,
+    });
     stopRingtoneRef.current = stop;
     return () => {
       stop();
@@ -103,7 +137,7 @@ export function IncomingCallModal() {
         stopRingtoneRef.current = null;
       }
     };
-  }, [open]);
+  }, [open, ringtoneEnabled, ringtoneVolumePct]);
 
   const handleAnswer = async (accept: boolean) => {
     stopRingtoneRef.current?.();
