@@ -22,17 +22,40 @@ pub use sync_ingest::{
 };
 pub use thread_cache::{load_threads_cache, save_threads_cache};
 pub use threads::{
-    load_history_into_threads, persist_account_threads, persist_threads, preload_account_history,
+    load_history_into_threads, load_poll_state_for_account, persist_account_threads,
+    persist_account_threads_with_poll_state, persist_threads, persist_threads_with_poll_state,
+    preload_account_history,
 };
 
+/// Current SQLite schema version tracked via `PRAGMA user_version`.
+pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+
 impl MessageStore {
-    /// Open SQLite database at `path` and initialize table schemas and indices if absent.
+    /// Open SQLite database at `path` and initialize table schemas, pragmas, and migrations.
+    ///
+    /// # Errors
+    /// Returns an error if SQLite fails to open, a migration fails, or `PRAGMA user_version`
+    /// exceeds [`CURRENT_SCHEMA_VERSION`].
     pub fn open(path: &str) -> Result<Self> {
         let conn = if path == ":memory:" {
             Connection::open_in_memory()?
         } else {
             Connection::open(path)?
         };
+
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
+        )?;
+
+        let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if user_version > CURRENT_SCHEMA_VERSION {
+            anyhow::bail!(
+                "Cơ sở dữ liệu SQLite có phiên bản schema ({user_version}) mới hơn phiên bản ứng dụng hỗ trợ ({CURRENT_SCHEMA_VERSION}). Vui lòng nâng cấp AloLite."
+            );
+        }
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages (
@@ -56,7 +79,7 @@ impl MessageStore {
         )?;
         // Migration 1: one-time cleanup of placeholder rows. This DELETE used to run (a full
         // table scan) on every hydrate; new rows are filtered in `persist_threads` instead.
-        if conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? < 1 {
+        if user_version < 1 {
             conn.execute_batch(
                 "BEGIN;
                  DELETE FROM messages WHERE text = 'sendBubbleMessage';
@@ -64,9 +87,54 @@ impl MessageStore {
                  COMMIT;",
             )?;
         }
+        // Migration 2: persist per-thread UnreadState and per-account PollState (`sync_state`).
+        if user_version < 2 {
+            migrate_v2(&conn)?;
+        }
 
         Ok(Self { conn })
     }
+}
+
+fn migrate_v2(conn: &Connection) -> Result<()> {
+    let mut existing_cols = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(threads)")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(1))?;
+        for name in rows {
+            existing_cols.insert(name?);
+        }
+    }
+
+    conn.execute_batch("BEGIN")?;
+    let res = (|| -> Result<()> {
+        for (col, def) in [
+            ("last_seen_id", "TEXT"),
+            ("unread_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("mention_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("is_marked_unread", "INTEGER NOT NULL DEFAULT 0"),
+            ("is_muted", "INTEGER NOT NULL DEFAULT 0"),
+            ("muted_until", "INTEGER"),
+        ] {
+            if !existing_cols.contains(col) {
+                conn.execute_batch(&format!("ALTER TABLE threads ADD COLUMN {col} {def};"))?;
+            }
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_state (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
+            PRAGMA user_version = 2;",
+        )?;
+        Ok(())
+    })();
+    if res.is_ok() {
+        conn.execute_batch("COMMIT")?;
+    } else {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
+    res
 }
 
 #[cfg(test)]
@@ -600,5 +668,154 @@ mod tests {
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].id, "776655");
         assert_eq!(fresh[0].name, "Nhóm Dự Án");
+    }
+
+    #[test]
+    fn unread_last_seen_id_is_monotonic_across_hydrate_and_persist_inv6() {
+        use crate::protocol::messaging::unread::UnreadState;
+        use crate::protocol::messaging::ChatMessage;
+
+        let mut store = MessageStore::open(":memory:").unwrap();
+        let mut unread = UnreadState::default();
+        unread.advance_seen("100");
+        unread.observe(&[ChatMessage {
+            id: "105".into(),
+            sender: "Alice".into(),
+            text: "New msg".into(),
+            ts: 1700000105,
+            is_outgoing: false,
+            ..Default::default()
+        }]);
+        assert_eq!(unread.count(), 1);
+
+        let thread = Thread {
+            id: "u_10".into(),
+            name: "Alice".into(),
+            unread,
+            messages: vec![ChatMessage {
+                id: "105".into(),
+                sender: "Alice".into(),
+                text: "New msg".into(),
+                ts: 1700000105,
+                is_outgoing: false,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        persist_threads(&mut store, &[thread]).unwrap();
+
+        // Mark seen optimistically and verify restart hydration keeps unread_count = 0. (INV-6)
+        store.mark_thread_seen("u_10", "105").unwrap();
+        let mut restarted: Vec<Thread> = Vec::new();
+        store.hydrate_threads(&mut restarted, 20).unwrap();
+        assert_eq!(restarted.len(), 1);
+        assert_eq!(restarted[0].unread.last_seen_id.as_deref(), Some("105"));
+        assert_eq!(restarted[0].unread.count(), 0); // (INV-6)
+
+        // Older snapshot must never regress `last_seen_id`. (INV-6)
+        let mut older_unread = UnreadState::default();
+        older_unread.advance_seen("90");
+        let older_thread = Thread {
+            id: "u_10".into(),
+            name: "Alice".into(),
+            unread: older_unread,
+            ..Default::default()
+        };
+        persist_threads(&mut store, &[older_thread]).unwrap();
+
+        let mut after_older: Vec<Thread> = Vec::new();
+        store.hydrate_threads(&mut after_older, 20).unwrap();
+        assert_eq!(after_older[0].unread.last_seen_id.as_deref(), Some("105")); // (INV-6)
+    }
+
+    #[test]
+    fn unread_cursor_and_poll_state_commit_atomically_inv6() {
+        use crate::protocol::messaging::polling::PollState;
+        use crate::protocol::messaging::ChatMessage;
+
+        let mut store = MessageStore::open(":memory:").unwrap();
+        let mut ps = PollState::default();
+        ps.last_action_id = "999888777".into();
+        ps.last_action_id_other = "111222333".into();
+
+        let mut t = Thread {
+            id: "g_55".into(),
+            name: "Core".into(),
+            is_group: true,
+            messages: vec![ChatMessage {
+                id: "500".into(),
+                sender: "Bob".into(),
+                text: "Hello".into(),
+                ts: 1700000500,
+                is_outgoing: false,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        t.unread.advance_seen("500");
+
+        persist_threads_with_poll_state(&mut store, &[t], Some(&ps)).unwrap();
+
+        let loaded_ps = store.load_poll_state().unwrap().unwrap();
+        assert_eq!(loaded_ps.last_action_id, "999888777"); // (INV-6)
+        assert_eq!(loaded_ps.last_action_id_other, "111222333"); // (INV-6)
+    }
+
+    #[test]
+    fn migration_v2_upgrades_v1_db_and_rejects_future_schema() {
+        let dir = std::env::temp_dir().join(format!(
+            "alolite_mig_v2_{}_{}",
+            std::process::id(),
+            crate::clock::unix_now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let db_str = db_path.to_str().unwrap();
+
+        {
+            let conn = rusqlite::Connection::open(db_str).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE messages (
+                    msg_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    sender_id TEXT,
+                    sender_name TEXT,
+                    text TEXT,
+                    msg_type TEXT,
+                    ts INTEGER,
+                    is_outgoing INTEGER,
+                    raw_json TEXT
+                );
+                CREATE TABLE threads (
+                    thread_id TEXT PRIMARY KEY,
+                    name TEXT,
+                    is_group INTEGER,
+                    last_ts INTEGER
+                );
+                INSERT INTO threads (thread_id, name, is_group, last_ts) VALUES ('t1', 'Legacy', 0, 100);
+                PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+
+        let store = MessageStore::open(db_str).unwrap();
+        let ver: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, CURRENT_SCHEMA_VERSION);
+        let unreads = store.load_thread_unreads().unwrap();
+        assert!(unreads.contains_key("t1"));
+        assert_eq!(unreads["t1"].last_seen_id, None);
+
+        store
+            .conn
+            .execute_batch("PRAGMA user_version = 99;")
+            .unwrap();
+        drop(store);
+
+        let err = MessageStore::open(db_str).err().unwrap();
+        assert!(err.to_string().contains("99"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
