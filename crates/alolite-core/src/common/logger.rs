@@ -6,6 +6,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -56,9 +57,31 @@ impl Default for LoggerState {
 }
 
 static CALL_LOG_FILE: LazyLock<Mutex<Option<File>>> = LazyLock::new(|| Mutex::new(None));
+static CALL_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|raw| {
+        let v = raw.trim();
+        !v.is_empty()
+            && !v.eq_ignore_ascii_case("0")
+            && !v.eq_ignore_ascii_case("false")
+            && !v.eq_ignore_ascii_case("no")
+    })
+}
+
+/// Enable persistent append-only call debug logging to `path` only when
+/// `ALOLITE_CALL_DEBUG` (or `ALOLITE_CALL_DUMP_WAV`) is enabled.
+pub fn enable_call_log_from_env(path: &Path) -> bool {
+    if !env_flag_enabled("ALOLITE_CALL_DEBUG") && !env_flag_enabled("ALOLITE_CALL_DUMP_WAV") {
+        return false;
+    }
+    enable_call_log(path);
+    true
+}
 
 /// Enable persistent append-only call debug logging to `path`.
 pub fn enable_call_log(path: &Path) {
+    CALL_DEBUG_ENABLED.store(true, Ordering::Relaxed);
     let mut opts = OpenOptions::new();
     opts.create(true).append(true);
     #[cfg(unix)]
@@ -76,6 +99,9 @@ pub fn enable_call_log(path: &Path) {
 
 /// Write one redacted diagnostic line to `call-debug.log` (when enabled) and stderr.
 pub fn call_debug(msg: &str) {
+    if !CALL_DEBUG_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let now = crate::clock::unix_now();
     let line = format!(
         "[{:02}:{:02}:{:02}] {msg}",
