@@ -518,9 +518,11 @@ pub fn build_request_params(
 ) -> Result<Value> {
     Ok(wire::obj(&[
         ("calleeId", Value::String(callee_id.to_string())),
-        ("callId", Value::from(call_id)),
+        ("rtcpAddress", Value::String(String::new())),
+        ("rtpAddress", Value::String(String::new())),
         ("codec", Value::String("[]".to_string())),
         ("session", Value::String(sess_id.to_string())),
+        ("callId", Value::from(call_id)),
         ("extendData", Value::String(extend_data.to_json_string()?)),
         ("subCommand", Value::from(3)),
     ]))
@@ -543,17 +545,17 @@ pub fn build_answer_params(
     status: i32,
     extend_data: &ExtendData,
 ) -> Result<Value> {
-    let mut fields = vec![
+    Ok(wire::obj(&[
         ("callerId", Value::String(caller_id.to_string())),
         ("callId", Value::from(call_id)),
         ("status", Value::from(status)),
+        ("codec", Value::String(String::new())),
+        ("rtcpAddress", Value::String(String::new())),
+        ("rtpAddress", Value::String(String::new())),
+        ("session_id", Value::String(sess_id.to_string())),
         ("extendData", Value::String(extend_data.to_json_string()?)),
         ("subCommand", Value::from(3)),
-    ];
-    if !sess_id.is_empty() {
-        fields.push(("session_id", Value::String(sess_id.to_string())));
-    }
-    Ok(wire::obj(&fields))
+    ]))
 }
 
 /// Build `11304` `/api/voicecall/answerack` parameters.
@@ -730,7 +732,7 @@ pub async fn answer_call(
     extend_data: &ExtendData,
 ) -> Result<CallSignalWireData> {
     let params = build_answer_params(caller_id, call_id, sess_id, status, extend_data)?;
-    get_voicecall(session, voice_call::ANSWER, params, true).await
+    get_voicecall(session, voice_call::ANSWER, params, false).await
 }
 
 /// Send `11304` `/api/voicecall/answerack`.
