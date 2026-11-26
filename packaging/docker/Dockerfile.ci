@@ -33,6 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
     libasound2-dev \
+    libopus-dev \
+    libpulse-dev \
+    libwebrtc-audio-processing-dev \
     # WebKitGTK and GUI desktop dependencies for Tauri v2
     libwebkit2gtk-4.1-dev \
     libsoup-3.0-dev \
