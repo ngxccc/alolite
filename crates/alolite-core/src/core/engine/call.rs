@@ -329,6 +329,7 @@ impl CoreEngine {
         let resp = match request_call(&s, &peer_id, 0, &ExtendData::default()).await {
             Ok(r) => r,
             Err(err) => {
+                eprintln!("[alolite::call] start_call failed: {err:#}");
                 crate::logger::log_error("call::signal", &format!("start_call failed: {err}"));
                 return Err(err);
             }
@@ -336,6 +337,10 @@ impl CoreEngine {
         let call_id = match resp.call_id_u32() {
             Some(id) => id,
             None => {
+                eprintln!(
+                    "[alolite::call] start_call response missing callId (cmd={:?})",
+                    resp.cmd
+                );
                 crate::logger::log_error(
                     "call::signal",
                     "start_call response missing numeric callId",

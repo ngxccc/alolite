@@ -89,7 +89,11 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
             onClick={() => {
               void ipc.startCall(thread.id, thread.name, thread.avatar).catch((err) => {
                 console.error("Failed to start call:", err);
-                showToast("Không thể bắt đầu cuộc gọi", "error");
+                const detail = err instanceof Error ? err.message : String(err);
+                showToast(
+                  detail ? `Không thể bắt đầu cuộc gọi: ${detail}` : "Không thể bắt đầu cuộc gọi",
+                  "error",
+                );
               });
             }}
           >
