@@ -299,6 +299,27 @@ fn compute_auth_tag(auth_key: &[u8; 20], data: &[u8], roc: u32) -> [u8; SRTP_AUT
     tag
 }
 
+/// Extract `(seq, payload)` from a decrypted RTP packet, skipping CSRC list,
+/// RTP header extension (`X` bit), and trailing padding (`P` bit).
+///
+/// # Errors
+/// Returns an error if the RTP header or padding length is malformed.
+pub fn extract_rtp_payload(rtp: &[u8]) -> Result<(u16, &[u8])> {
+    let hdr_len = rtp_header_len(rtp)?;
+    let seq = u16::from_be_bytes([rtp[2], rtp[3]]);
+    let has_pad = (rtp[0] & 0x20) != 0;
+    let end = if has_pad {
+        let pad_len = usize::from(*rtp.last().unwrap_or(&0));
+        if pad_len == 0 || hdr_len + pad_len > rtp.len() {
+            bail!("invalid RTP padding length ({pad_len})");
+        }
+        rtp.len() - pad_len
+    } else {
+        rtp.len()
+    };
+    Ok((seq, &rtp[hdr_len..end]))
+}
+
 fn rtp_header_len(rtp: &[u8]) -> Result<usize> {
     if rtp.len() < RTP_MIN_HEADER_LEN {
         bail!(
@@ -421,5 +442,25 @@ mod tests {
         assert_eq!(recovered, make_rtp(1000, 0xAABBCCDD, b"after"));
         assert_eq!(rx.rx_roc().roc(), 0);
         assert_eq!(rx.rx_roc().last_seq(), Some(1000));
+    }
+
+    #[test]
+    fn extract_rtp_payload_skips_extension_and_padding() {
+        // V=2, P=1, X=1, CC=1 (0xB1), PT=112, seq=42, ts=160, ssrc=1, csrc=2,
+        // ext_profile=0xBEDE, ext_len=1 word (4 bytes), payload=b"opus", pad=[0, 2]
+        let mut pkt = vec![
+            0xB1, 112, 0, 42, // V/P/X/CC, PT, seq=42
+            0, 0, 0, 160, // timestamp
+            0, 0, 0, 1, // SSRC
+            0, 0, 0, 2, // 1 CSRC
+            0xBE, 0xDE, 0, 1, // 1-word RTP header extension
+            0x11, 0x22, 0x33, 0x44, // extension body
+        ];
+        pkt.extend_from_slice(b"opus");
+        pkt.extend_from_slice(&[0x00, 0x02]); // 2-byte padding
+
+        let (seq, payload) = extract_rtp_payload(&pkt).unwrap();
+        assert_eq!(seq, 42);
+        assert_eq!(payload, b"opus");
     }
 }
