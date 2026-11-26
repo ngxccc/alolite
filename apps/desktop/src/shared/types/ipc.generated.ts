@@ -71,6 +71,9 @@ export type AutoReplyRule = {
 	scope?: string,
 };
 
+/**  Terminal outcome of a persisted 1-1 ZRTC audio call log entry. */
+export type CallOutcome = "completed" | "missed" | "rejected" | "cancelled";
+
 /**  UI-facing lifecycle phase of the single active 1-1 ZRTC audio call (`INV-7`). */
 export type CallPhase = "idle" | "outgoing_ringing" | "incoming_ringing" | "connecting" | "active" | "ending";
 
@@ -134,6 +137,8 @@ export type ChatMessage = {
 	link_desc?: string | null,
 	link_thumb?: string | null,
 	link_src?: string | null,
+	call_outcome?: CallOutcome | null,
+	call_duration_secs?: number | null,
 	history_source?: Value | null,
 	resolved_mention_uids?: { [key in string]: string },
 };
@@ -196,6 +201,9 @@ export type CoreEventDto = { type: "NotificationAuthorization"; payload: {
 	cate_id: number,
 	sticker_type: number,
 } } | { type: "AttachmentSent"; payload: {
+	thread_id: string,
+	msg: ChatMessage,
+} } | { type: "CallHistoryRecorded"; payload: {
 	thread_id: string,
 	msg: ChatMessage,
 } } | { type: "StickerImageReady"; payload: {
@@ -370,7 +378,7 @@ export type LogEntry = {
 };
 
 /**  Normalized message content type across Zalo protocol variants (live push, poll, cloud archive). */
-export type MessageKind = "text" | "photo" | "video" | "voice" | "sticker" | "file" | "link" | "location" | "contact" | "gif" | "recall" | "system" | "action" | "web_content" | "delete" | "unknown";
+export type MessageKind = "text" | "photo" | "video" | "voice" | "sticker" | "file" | "link" | "location" | "contact" | "gif" | "recall" | "system" | "action" | "web_content" | "delete" | "call" | "unknown";
 
 /**  Real-time mute/unmute control notification (`act_type: "mute"`, `act: "set" | "unset"`, `#67`). */
 export type MuteControlEvent = {

@@ -17,9 +17,9 @@ pub mod wire;
 pub use auth::{QrConfirmResult, QrLogin, QrScannedProfile};
 pub use client::ZaloClient;
 pub use messaging::{
-    ChatMessage, CloudMessagesPage, DeliveryState, LastMsgsBatch, LinkMetadata, MessageKind,
-    MuteSnapshot, PollBatch, PollState, StickerItem, StickerPackInfo, Thread, UnreadPolicy,
-    WireMessageRef,
+    CallOutcome, ChatMessage, CloudMessagesPage, DeliveryState, LastMsgsBatch, LinkMetadata,
+    MessageKind, MuteSnapshot, PollBatch, PollState, StickerItem, StickerPackInfo, Thread,
+    UnreadPolicy, WireMessageRef,
 };
 pub use registry::{ApiDomain, CommandSpec};
 pub use session::Session;

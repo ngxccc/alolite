@@ -22,8 +22,19 @@ pub enum MessageKind {
     Action,
     WebContent,
     Delete,
+    Call,
     #[default]
     Unknown,
+}
+
+/// Terminal outcome of a persisted 1-1 ZRTC audio call log entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CallOutcome {
+    Completed,
+    Missed,
+    Rejected,
+    Cancelled,
 }
 impl MessageKind {
     /// Original shared-worker-original.js, module 1pet, UTF-8 bytes 1505800..1505954.
@@ -131,6 +142,7 @@ impl MessageKind {
             "chat.list.action" => Self::Action,
             "chat.webcontent" | "chat.webcontent.v2" => Self::WebContent,
             "chat.delete" => Self::Delete,
+            "chat.call" | "call" => Self::Call,
             _ => Self::Unknown,
         }
     }

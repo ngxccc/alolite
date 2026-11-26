@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::messaging::ChatMessage;
+use crate::protocol::messaging::{ChatMessage, MessageKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredMessage {
@@ -49,7 +49,9 @@ pub fn db_path_for_account(uin: &str) -> String {
 impl From<&ChatMessage> for StoredMessage {
     fn from(m: &ChatMessage) -> Self {
         let mut meta = serde_json::Map::new();
-        let msg_type = if let Some(sid) = m.sticker_id {
+        let msg_type = if m.kind == MessageKind::Call {
+            "chat.call".to_string()
+        } else if let Some(sid) = m.sticker_id {
             let cid = m.sticker_cate_id.unwrap_or(0);
             let st = m.sticker_type.unwrap_or(7);
             meta.insert("stickerId".into(), serde_json::json!(sid));
@@ -59,6 +61,15 @@ impl From<&ChatMessage> for StoredMessage {
         } else {
             "chat.text".to_string()
         };
+        if let Some(outcome) = m.call_outcome {
+            meta.insert("call_outcome".into(), serde_json::json!(outcome));
+        }
+        if let Some(duration_secs) = m.call_duration_secs {
+            meta.insert(
+                "call_duration_secs".into(),
+                serde_json::json!(duration_secs),
+            );
+        }
         if let Some(ref rid) = m.reply_to_id {
             meta.insert("reply_to_id".into(), serde_json::json!(rid));
         }

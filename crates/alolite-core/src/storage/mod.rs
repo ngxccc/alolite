@@ -818,4 +818,52 @@ mod tests {
         assert!(err.to_string().contains("99"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn call_message_roundtrips_outcome_and_duration_without_v3_migration() {
+        use crate::protocol::messaging::{CallOutcome, ChatMessage, MessageKind};
+
+        let mut store = MessageStore::open(":memory:").unwrap();
+        let ver: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, 2, "must not bump SQLite schema to v3");
+
+        let call_msg = ChatMessage {
+            id: "call_9001".into(),
+            kind: MessageKind::Call,
+            sender: "Tôi".into(),
+            sender_id: Some("0".into()),
+            text: "Cuộc gọi thoại (01:23)".into(),
+            time: "12:00".into(),
+            is_outgoing: true,
+            ts: 1_700_000_000_000,
+            call_outcome: Some(CallOutcome::Completed),
+            call_duration_secs: Some(83),
+            ..Default::default()
+        };
+
+        let mut sm = StoredMessage::from(&call_msg);
+        sm.thread_id = "peer-1".into();
+        assert_eq!(sm.msg_type, "chat.call");
+
+        assert!(store.upsert_message(&sm).unwrap());
+        // (INV-4) Re-inserting the same msg_id must be idempotent.
+        assert!(!store.upsert_message(&sm).unwrap());
+
+        let mut threads = vec![Thread {
+            id: "peer-1".into(),
+            name: "Bạn bè".into(),
+            ..Default::default()
+        }];
+        store.hydrate_threads(&mut threads, 20).unwrap();
+
+        assert_eq!(threads[0].messages.len(), 1);
+        let hydrated = &threads[0].messages[0];
+        assert_eq!(hydrated.id, "call_9001");
+        assert_eq!(hydrated.kind, MessageKind::Call);
+        assert_eq!(hydrated.call_outcome, Some(CallOutcome::Completed));
+        assert_eq!(hydrated.call_duration_secs, Some(83));
+    }
 }

@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use crate::protocol::messaging::model::{CallOutcome, MessageKind};
 use crate::protocol::messaging::polling::PollState;
 use crate::protocol::messaging::threads::{
     deduplicate_threads, is_generic_thread_name, ChatMessage, Thread,
@@ -69,6 +70,10 @@ pub struct CachedMessageWireData {
     pub client_message_id: Option<serde_json::Value>,
     #[serde(rename = "cliMsgId")]
     pub cli_msg_id: Option<serde_json::Value>,
+    #[serde(rename = "call_outcome")]
+    pub call_outcome: Option<serde_json::Value>,
+    #[serde(rename = "call_duration_secs")]
+    pub call_duration_secs: Option<serde_json::Value>,
 }
 
 impl CachedMessageWireData {
@@ -156,6 +161,18 @@ impl CachedMessageWireData {
     /// Client message id (`client_message_id` > `cliMsgId`).
     pub fn client_message_id(&self) -> Option<String> {
         opt_string(self.client_message_id.as_ref()).or_else(|| opt_string(self.cli_msg_id.as_ref()))
+    }
+
+    /// Persisted 1-1 call outcome.
+    pub fn call_outcome(&self) -> Option<CallOutcome> {
+        self.call_outcome
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<CallOutcome>(v.clone()).ok())
+    }
+
+    /// Persisted 1-1 call duration in seconds.
+    pub fn call_duration_secs(&self) -> Option<u64> {
+        opt_u64(self.call_duration_secs.as_ref())
     }
 }
 
@@ -497,6 +514,8 @@ impl MessageStore {
                 let mut link_desc = None;
                 let mut link_thumb = None;
                 let mut link_src = None;
+                let mut call_outcome = None;
+                let mut call_duration_secs = None;
                 let mut client_message_id = String::new();
                 if !sm.raw_json.is_empty() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&sm.raw_json) {
@@ -522,6 +541,8 @@ impl MessageStore {
                         link_desc = cached.link_desc();
                         link_thumb = cached.link_thumb();
                         link_src = cached.link_src();
+                        call_outcome = cached.call_outcome();
+                        call_duration_secs = cached.call_duration_secs();
                         if let Some(cid) = cached.client_message_id() {
                             client_message_id = cid;
                         }
@@ -537,6 +558,7 @@ impl MessageStore {
                     None
                 };
                 let cm = ChatMessage {
+                    kind: MessageKind::from_wire_name(&sm.msg_type),
                     id: sm.msg_id,
                     sender: if !sm.sender_name.is_empty() {
                         sm.sender_name
@@ -562,6 +584,8 @@ impl MessageStore {
                     link_desc,
                     link_thumb,
                     link_src,
+                    call_outcome,
+                    call_duration_secs,
 
                     client_message_id,
                     ..Default::default()
@@ -609,6 +633,15 @@ impl MessageStore {
                     }
                     if existing.client_message_id.is_empty() && !cm.client_message_id.is_empty() {
                         existing.client_message_id = cm.client_message_id;
+                    }
+                    if existing.kind == MessageKind::Unknown && cm.kind != MessageKind::Unknown {
+                        existing.kind = cm.kind;
+                    }
+                    if existing.call_outcome.is_none() && cm.call_outcome.is_some() {
+                        existing.call_outcome = cm.call_outcome;
+                    }
+                    if existing.call_duration_secs.is_none() && cm.call_duration_secs.is_some() {
+                        existing.call_duration_secs = cm.call_duration_secs;
                     }
                     existing.is_pinned = existing.is_pinned || cm.is_pinned;
                     existing.is_starred = existing.is_starred || cm.is_starred;

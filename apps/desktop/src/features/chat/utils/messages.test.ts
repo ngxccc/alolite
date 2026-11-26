@@ -25,6 +25,65 @@ describe("chat message utils", () => {
     expect(missed?.isMissedOrFailed).toBe(true);
   });
 
+  it("parses MessageKind::Call cards with outcome and duration metadata", () => {
+    const completed = parseCallCard(
+      msg({
+        kind: "call",
+        is_outgoing: true,
+        text: "Cuộc gọi thoại (01:23)",
+        call_outcome: "completed",
+        call_duration_secs: 83,
+      }),
+    );
+    expect(completed).toEqual({
+      title: "Cuộc gọi thoại",
+      subtitle: "Cuộc gọi đi · 01:23",
+      isMissedOrFailed: false,
+      isVideo: false,
+      outcome: "completed",
+      isOutgoing: true,
+    });
+
+    const missed = parseCallCard(
+      msg({
+        kind: "call",
+        is_outgoing: false,
+        text: "Cuộc gọi nhỡ",
+        call_outcome: "missed",
+      }),
+    );
+    expect(missed).toEqual({
+      title: "Cuộc gọi nhỡ",
+      subtitle: "Cuộc gọi đến bị nhỡ",
+      isMissedOrFailed: true,
+      isVideo: false,
+      outcome: "missed",
+      isOutgoing: false,
+    });
+
+    const rejected = parseCallCard(
+      msg({
+        kind: "call",
+        is_outgoing: false,
+        text: "Đã từ chối cuộc gọi",
+        call_outcome: "rejected",
+      }),
+    );
+    expect(rejected?.isMissedOrFailed).toBe(true);
+    expect(rejected?.outcome).toBe("rejected");
+
+    const cancelled = parseCallCard(
+      msg({
+        kind: "call",
+        is_outgoing: true,
+        text: "Đã hủy cuộc gọi",
+        call_outcome: "cancelled",
+      }),
+    );
+    expect(cancelled?.isMissedOrFailed).toBe(true);
+    expect(cancelled?.outcome).toBe("cancelled");
+  });
+
   it("classifies photo vs sticker vs file attachments cleanly", () => {
     expect(isPhotoMessage(msg({ text: "[Hình ảnh]", sticker_id: 123 }))).toBe(false);
     expect(isPhotoMessage(msg({ text: "[Hình ảnh]" }))).toBe(true);

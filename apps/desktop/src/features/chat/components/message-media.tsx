@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, FileText, Phone, Play, Video } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  FileText,
+  Phone,
+  PhoneIncoming,
+  PhoneMissed,
+  PhoneOff,
+  PhoneOutgoing,
+  Play,
+  Video,
+} from "lucide-react";
 import { ipc } from "@/shared/api/ipc";
 import type { ChatMessage } from "@/shared/types/ipc.generated";
 import { Button } from "@/shared/ui/button";
@@ -320,6 +331,26 @@ export function LinkPreviewCard({ msg }: { msg: ChatMessage }) {
 }
 
 export function CallCardMedia({ callCard }: { callCard: CallCardMeta }) {
+  const renderIcon = () => {
+    if (callCard.isVideo) {
+      return <Video className="h-4.5 w-4.5" aria-hidden="true" />;
+    }
+    if (callCard.outcome === "missed") {
+      return <PhoneMissed className="h-4.5 w-4.5" aria-hidden="true" />;
+    }
+    if (callCard.outcome === "rejected" || callCard.outcome === "cancelled") {
+      return <PhoneOff className="h-4.5 w-4.5" aria-hidden="true" />;
+    }
+    if (callCard.outcome === "completed") {
+      return callCard.isOutgoing ? (
+        <PhoneOutgoing className="h-4.5 w-4.5" aria-hidden="true" />
+      ) : (
+        <PhoneIncoming className="h-4.5 w-4.5" aria-hidden="true" />
+      );
+    }
+    return <Phone className="h-4.5 w-4.5" aria-hidden="true" />;
+  };
+
   return (
     <div className="flex min-w-50 items-center gap-2.5">
       <div
@@ -330,11 +361,11 @@ export function CallCardMedia({ callCard }: { callCard: CallCardMeta }) {
             : "bg-online/15 text-online",
         )}
       >
-        {callCard.isVideo ? <Video className="h-4.5 w-4.5" /> : <Phone className="h-4.5 w-4.5" />}
+        {renderIcon()}
       </div>
       <div>
         <div className="text-sm font-bold">{callCard.title}</div>
-        <div className="text-xs text-muted-foreground">{callCard.subtitle}</div>
+        <div className="text-xs text-muted-foreground tabular-nums">{callCard.subtitle}</div>
       </div>
     </div>
   );
