@@ -193,8 +193,16 @@ pub(super) fn merge_thread_headers(
     force_group: bool,
 ) {
     for item in incoming {
-        if let Some(ex) = list.iter_mut().find(|t| t.id == item.id) {
-            if !item.name.is_empty() {
+        if let Some(ex) = list.iter_mut().find(|t| {
+            t.id == item.id
+                || ((force_group || (t.is_group && item.is_group))
+                    && crate::protocol::wire::strip_group_prefix(&t.id)
+                        == crate::protocol::wire::strip_group_prefix(&item.id))
+        }) {
+            if !item.name.is_empty()
+                && (!crate::protocol::messaging::threads::is_generic_thread_name(&item.name)
+                    || crate::protocol::messaging::threads::is_generic_thread_name(&ex.name))
+            {
                 ex.name = item.name;
             }
             if crate::protocol::messaging::threads::should_replace_avatar(

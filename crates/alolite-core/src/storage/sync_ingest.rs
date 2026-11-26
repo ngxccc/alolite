@@ -4,19 +4,20 @@
 //! and cache files ([`super::thread_cache`]) without importing [`crate::protocol::session::Session`]
 //! or performing any HTTP requests.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use rusqlite::Connection;
 
 use super::models::{MessageStore, StoredMessage, StoredThread};
 use super::thread_cache::{load_threads_cache, save_threads_cache};
-use super::threads::persist_threads;
+use super::threads::{persist_threads, upsert_thread_on_conn};
 use crate::protocol::messaging::threads::{is_generic_thread_name, Thread};
 use crate::protocol::sync::{
     build_synced_message_content, is_excluded_archive_msg_type, parse_bin_net_tlv,
     ParsedProtoPartition,
 };
+use crate::protocol::wire::strip_group_prefix;
 
 /// Extracted `ChatContent` row from a Sync V1 mobile SQLite conversation archive.
 #[derive(Debug, Clone)]
@@ -189,9 +190,28 @@ pub fn commit_conv_archives_to_store(
     });
 
     let mut known_names: HashMap<String, String> = HashMap::new();
+    let mut stored_group_ids: HashSet<String> = HashSet::new();
+    for st in store.all_threads()? {
+        if st.is_group && !st.thread_id.is_empty() {
+            stored_group_ids.insert(st.thread_id.clone());
+        }
+        if !st.thread_id.is_empty() && !is_generic_thread_name(&st.name) {
+            known_names.insert(st.thread_id.clone(), st.name.clone());
+            if st.is_group {
+                known_names.insert(strip_group_prefix(&st.thread_id).to_string(), st.name);
+            }
+        }
+    }
+    let mut cached_group_ids: HashSet<String> = HashSet::new();
     for t in cached_threads.iter() {
+        if t.is_group && !t.id.is_empty() {
+            cached_group_ids.insert(t.id.clone());
+        }
         if !t.id.is_empty() && !is_generic_thread_name(&t.name) {
             known_names.insert(t.id.clone(), t.name.clone());
+            if t.is_group {
+                known_names.insert(strip_group_prefix(&t.id).to_string(), t.name.clone());
+            }
         }
     }
 
@@ -208,21 +228,32 @@ pub fn commit_conv_archives_to_store(
                 continue;
             };
 
-            let g_prefixed = format!("g{raw_tid}");
-            let thread_id = if is_group && cached_threads.iter().any(|t| t.id == g_prefixed) {
-                g_prefixed
+            let clean_tid = strip_group_prefix(&raw_tid).to_string();
+            let g_prefixed = format!("g{clean_tid}");
+            let thread_id = if is_group && stored_group_ids.contains(&clean_tid) {
+                clean_tid.clone()
+            } else if is_group
+                && (stored_group_ids.contains(&g_prefixed)
+                    || cached_group_ids.contains(&g_prefixed))
+            {
+                g_prefixed.clone()
             } else {
                 raw_tid
             };
 
             let max_ts = conv.rows.iter().map(|r| r.ts).max().unwrap_or(0);
-            let thread_name = known_names.get(&thread_id).cloned().unwrap_or_else(|| {
-                if is_group {
-                    format!("Nhóm {thread_id}")
-                } else {
-                    format!("Người dùng {thread_id}")
-                }
-            });
+            let thread_name = known_names
+                .get(&thread_id)
+                .or_else(|| is_group.then(|| known_names.get(&clean_tid)).flatten())
+                .or_else(|| is_group.then(|| known_names.get(&g_prefixed)).flatten())
+                .cloned()
+                .unwrap_or_else(|| {
+                    if is_group {
+                        format!("Nhóm {thread_id}")
+                    } else {
+                        format!("Người dùng {thread_id}")
+                    }
+                });
             store.upsert_thread(&StoredThread {
                 thread_id: thread_id.clone(),
                 name: thread_name,
@@ -335,23 +366,40 @@ pub fn commit_mobile_backup_to_store(
     Ok((imported, cached_threads))
 }
 
-/// Persist resolved thread names into SQLite and save updated threads cache.
+/// Persist resolved non-generic thread names into an open [`MessageStore`] inside a transaction.
 ///
 /// # Errors
-/// Returns an error if opening the store fails.
-pub fn persist_resolved_thread_names(db_path: &str, threads: &[Thread]) -> Result<()> {
-    let mut store = MessageStore::open(db_path)?;
+/// Returns an error if the SQLite transaction or any `upsert_thread` call fails.
+pub fn persist_resolved_thread_names_in_store(
+    store: &mut MessageStore,
+    threads: &[Thread],
+) -> Result<()> {
+    let tx = store.conn.transaction()?;
     for t in threads {
         if !t.id.is_empty() && !is_generic_thread_name(&t.name) {
             let last_ts = t.messages.last().map(|m| m.ts).unwrap_or(0);
-            let _ = store.upsert_thread(&StoredThread {
-                thread_id: t.id.clone(),
-                name: t.name.clone(),
-                is_group: t.is_group,
-                last_ts,
-            });
+            upsert_thread_on_conn(
+                &tx,
+                &StoredThread {
+                    thread_id: t.id.clone(),
+                    name: t.name.clone(),
+                    is_group: t.is_group,
+                    last_ts,
+                },
+            )?;
         }
     }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Persist resolved thread names into SQLite and save updated threads cache.
+///
+/// # Errors
+/// Returns an error if opening the store or committing the transaction fails.
+pub fn persist_resolved_thread_names(db_path: &str, threads: &[Thread]) -> Result<()> {
+    let mut store = MessageStore::open(db_path)?;
+    persist_resolved_thread_names_in_store(&mut store, threads)?;
     save_threads_cache(threads);
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::protocol::wire::{opt_string, opt_u64, WireData};
+use crate::protocol::wire::{opt_string, opt_u64, strip_group_prefix, WireData};
 use anyhow::Result;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,33 @@ impl CachedMessageWireData {
     }
 }
 
+pub(super) fn upsert_thread_on_conn(conn: &rusqlite::Connection, t: &StoredThread) -> Result<()> {
+    // Guard against clobbering a real name already persisted in SQLite with `"Nhóm <gid>"` / `"Người dùng <uid>"`.
+    let name_sql = if is_generic_thread_name(&t.name) {
+        "CASE WHEN trim(threads.name) = '' THEN excluded.name ELSE threads.name END"
+    } else {
+        "excluded.name"
+    };
+    let sql = format!(
+        "INSERT INTO threads (thread_id, name, is_group, last_ts)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(thread_id) DO UPDATE SET
+             name = {name_sql},
+             is_group = excluded.is_group,
+             last_ts = MAX(COALESCE(last_ts, 0), excluded.last_ts)"
+    );
+    conn.execute(
+        &sql,
+        params![
+            t.thread_id,
+            t.name,
+            if t.is_group { 1 } else { 0 },
+            t.last_ts,
+        ],
+    )?;
+    Ok(())
+}
+
 impl MessageStore {
     /// Delete an entire conversation and all its messages from local SQLite store (#24).
     pub fn delete_thread(&mut self, thread_id: &str) -> Result<()> {
@@ -172,23 +199,9 @@ impl MessageStore {
         Ok(())
     }
 
-    /// Insert or update thread metadata.
+    /// Insert or update thread metadata without overwriting a real display name with a placeholder.
     pub fn upsert_thread(&mut self, t: &StoredThread) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO threads (thread_id, name, is_group, last_ts)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(thread_id) DO UPDATE SET
-                 name = excluded.name,
-                 is_group = excluded.is_group,
-                 last_ts = MAX(COALESCE(last_ts, 0), excluded.last_ts)",
-            params![
-                t.thread_id,
-                t.name,
-                if t.is_group { 1 } else { 0 },
-                t.last_ts,
-            ],
-        )?;
-        Ok(())
+        upsert_thread_on_conn(&self.conn, t)
     }
 
     /// Retrieve all persisted thread metadata ordered by `last_ts` descending.
@@ -228,8 +241,16 @@ impl MessageStore {
             if st.thread_id.is_empty() || st.thread_id == "0" {
                 continue;
             }
-            if let Some(existing) = threads.iter_mut().find(|t| t.id == st.thread_id) {
-                if is_generic_thread_name(&existing.name) && !st.name.is_empty() {
+            if let Some(existing) = threads.iter_mut().find(|t| {
+                t.id == st.thread_id
+                    || (st.is_group
+                        && t.is_group
+                        && strip_group_prefix(&t.id) == strip_group_prefix(&st.thread_id))
+            }) {
+                if is_generic_thread_name(&existing.name)
+                    && !st.name.is_empty()
+                    && !is_generic_thread_name(&st.name)
+                {
                     existing.name = st.name;
                 }
                 existing.is_group = existing.is_group || st.is_group;
