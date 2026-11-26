@@ -10,9 +10,10 @@ description = "UI-independent Zalo protocol, CoreEngine, SQLite store, and MCP r
 
 [features]
 default = []
-call = ["dep:pkg-config"]
+call = ["dep:pkg-config", "dep:cc"]
 
 [build-dependencies]
+cc = { version = "1.11", optional = true }
 pkg-config = { version = "0.3", optional = true }
 
 [dependencies]
