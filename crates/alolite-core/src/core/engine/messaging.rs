@@ -25,7 +25,7 @@ use crate::protocol::messaging::{ChatMessage, LinkMetadata};
 use crate::protocol::session::SessionStatus;
 use crate::protocol::wire::{next_client_message_id, SendMessageReceipt};
 use crate::protocol::ActionAck;
-use crate::storage::{MessageStore, StoredMessage};
+use crate::storage::{thread_cache::update_cached_thread_unread, MessageStore, StoredMessage};
 
 impl CoreEngine {
     /// Read stored messages for `thread_id` from SQLite (`spawn_blocking`, `INV-3`).
@@ -460,6 +460,16 @@ impl CoreEngine {
     }
 
     pub async fn send_seen(&self, thread_id: &str, is_group: bool, last_msg_id: &str) {
+        let db_path = self.active_db_path().await;
+        let tid = thread_id.to_string();
+        let mid = last_msg_id.to_string();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut store) = MessageStore::open(&db_path) {
+                let _ = store.mark_thread_seen(&tid, &mid);
+            }
+            update_cached_thread_unread(&tid, Some(&mid), Some(false));
+        })
+        .await;
         let s = self.session.lock().await.clone();
         let _ = send_seen_v2(&s, thread_id, is_group, last_msg_id).await;
     }

@@ -166,15 +166,41 @@ pub async fn poll_new_messages(
     threads: &mut Vec<Thread>,
 ) -> Result<()> {
     let login = require_login(s)?;
+    let mut saw_reset = false;
     for _ in 0..3 {
         let Ok(batch) = get_chat_from_polling(s, state).await else {
             break;
         };
         batch.merge_into(threads);
+        batch.merge_read_points_into(threads);
+        if batch.has_reset {
+            saw_reset = true;
+            crate::logger::log_error(
+                "polling::poll_new_messages",
+                "getChatFromPolling returned has_reset; using preview sync fallback",
+            );
+        }
         if !batch.more && !batch.has_reset {
             break;
         }
     }
+    // Snapshot newest known message IDs before `get_last_msgs` so `has_reset` only pulls
+    // cloud history for threads whose server preview is strictly newer than local SQLite.
+    let pre_preview_newest: std::collections::HashMap<String, String> = threads
+        .iter()
+        .filter_map(|t| {
+            let newest = t
+                .messages
+                .iter()
+                .filter(|m| !m.id.is_empty() && m.id.bytes().all(|b| b.is_ascii_digit()))
+                .max_by(|a, b| {
+                    crate::protocol::messaging::unread::compare_ids(&a.id, &b.id)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|m| m.id.clone())?;
+            Some((t.id.clone(), newest))
+        })
+        .collect();
     if let Ok(preview_batch) = get_last_msgs(s, &[]).await {
         preview_batch.merge_into(threads);
     }
@@ -195,7 +221,13 @@ pub async fn poll_new_messages(
         }
     }
     let send2me_id = login.send2me_id.clone();
-    if !send2me_id.is_empty() {
+    if !send2me_id.is_empty()
+        && (saw_reset
+            || threads
+                .iter()
+                .find(|t| t.id == send2me_id)
+                .is_none_or(|t| t.messages.is_empty()))
+    {
         if let Ok(cm_page) = get_cloud_messages(s, &send2me_id, "0", false, 50).await {
             if let Some(t) = threads.iter_mut().find(|t| t.id == send2me_id) {
                 cm_page.merge_into_thread(t);
@@ -204,12 +236,31 @@ pub async fn poll_new_messages(
             }
         }
     }
-    let group_ids: Vec<String> = threads
+    // Only fetch cloud history for groups that have zero local messages, or when `has_reset`
+    // occurred and `get_last_msgs` revealed a strictly newer message ID than local SQLite.
+    let target_group_ids: Vec<String> = threads
         .iter()
-        .filter(|t| t.is_group && !t.id.is_empty())
+        .filter(|t| {
+            if !t.is_group || t.id.is_empty() {
+                return false;
+            }
+            if t.messages.is_empty() {
+                return true;
+            }
+            if !saw_reset {
+                return false;
+            }
+            let Some(prev_id) = pre_preview_newest.get(&t.id) else {
+                return true;
+            };
+            t.messages.iter().any(|m| {
+                crate::protocol::messaging::unread::compare_ids(&m.id, prev_id)
+                    .is_some_and(|o| o.is_gt())
+            })
+        })
         .map(|t| t.id.clone())
         .collect();
-    for gid in group_ids {
+    for gid in target_group_ids {
         if let Ok(cm_page) = get_cloud_messages(s, &gid, "0", false, 50).await {
             if let Some(t) = threads.iter_mut().find(|t| t.id == gid) {
                 cm_page.merge_into_thread(t);
@@ -219,6 +270,26 @@ pub async fn poll_new_messages(
     resolve_thread_names(s, threads).await;
     threads.retain(|t| !t.messages.is_empty() || !t.name.starts_with("Người dùng "));
     deduplicate_threads(threads, None);
+
+    // Anchor `last_seen_id` on first-ever bootstrap if the server omitted a read point so
+    // historical messages do not fabricate unread badges while future messages still count.
+    for t in threads.iter_mut() {
+        if t.unread.last_seen_id.is_none() {
+            if let Some(newest_id) = t
+                .messages
+                .iter()
+                .filter(|m| !m.id.is_empty() && m.id.bytes().all(|b| b.is_ascii_digit()))
+                .max_by(|a, b| {
+                    crate::protocol::messaging::unread::compare_ids(&a.id, &b.id)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|m| m.id.clone())
+            {
+                t.unread.advance_seen(&newest_id);
+            }
+        }
+        t.unread.observe_for_account(&t.messages, &login.uin);
+    }
     Ok(())
 }
 
