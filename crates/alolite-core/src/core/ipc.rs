@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use base64::Engine as _;
 use serde::Serialize;
 
-use super::events::CoreEvent;
+use super::events::{CallPhase, CoreEvent};
 use super::settings::AppSettings;
 use crate::common::logger::{LogEntry, ScanFinding};
 use crate::protocol::auth::login::CaptchaChallenge;
@@ -313,6 +313,18 @@ pub enum CoreEventDto {
         avatar: Option<String>,
         threads: Vec<Thread>,
     },
+    CallStateChanged {
+        phase: CallPhase,
+        call_id: Option<u32>,
+        peer_id: Option<String>,
+        peer_name: Option<String>,
+        peer_avatar: Option<String>,
+        is_incoming: bool,
+        is_muted: bool,
+        is_held: bool,
+        started_at_ms: Option<i64>,
+        end_reason: Option<String>,
+    },
 }
 
 impl From<CoreEvent> for CoreEventDto {
@@ -566,6 +578,29 @@ impl From<CoreEvent> for CoreEventDto {
                 name,
                 avatar,
                 threads,
+            },
+            CoreEvent::CallStateChanged {
+                phase,
+                call_id,
+                peer_id,
+                peer_name,
+                peer_avatar,
+                is_incoming,
+                is_muted,
+                is_held,
+                started_at_ms,
+                end_reason,
+            } => Self::CallStateChanged {
+                phase,
+                call_id,
+                peer_id,
+                peer_name,
+                peer_avatar,
+                is_incoming,
+                is_muted,
+                is_held,
+                started_at_ms,
+                end_reason,
             },
         }
     }

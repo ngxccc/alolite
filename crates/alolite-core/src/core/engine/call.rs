@@ -1,0 +1,1293 @@
+//! 1-1 ZRTC audio call coordinator (`CallManager`) for [`CoreEngine`].
+//!
+//! Enforces `INV-7` (single active `CallSession`), `INV-8` (SRTP + redacted logs),
+//! `INV-9` (`CallManager` lives outside `CoreEngine::session` mutex), and `EDGE-5`
+//! (headless mode ignores `401` invites and never opens local audio devices).
+
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
+
+use anyhow::{bail, Result};
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
+
+use super::CoreEngine;
+use crate::clock::{now_ms, unix_now};
+use crate::core::events::{CallPhase, CoreEvent};
+use crate::protocol::call::signaling::{
+    answer_call, cancel_call, end_call as send_end_call_http, hold_request, log_end_call,
+    request_call, send_answer_ack, send_conf, send_request, send_ring_ring, unhold_request,
+    CallSignalCode, CallSignalWireData, ExtendData, RelayServerAddr, SrtpKeyMaterial,
+};
+use crate::protocol::call::srtp::SrtpContext;
+use crate::protocol::call::zrtp::{ControlBody, ZRTPPacket, ZrtpCmd};
+use crate::protocol::call::{
+    CallDirection, CallEffect, CallEndReason, CallEvent, CallSession, CallState,
+};
+use crate::protocol::session::Session;
+use crate::services::call_media::{
+    NetEq, NetEqConfig, NullAudioBackend, NullOpusDecoder, NullOpusEncoder, OpusDecoderBackend,
+    OpusEncoderBackend, FRAME_SAMPLES,
+};
+
+/// Default ring timeout before unanswered incoming/outgoing calls auto-cancel (`60 s`).
+pub const DEFAULT_RING_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Default active media watchdog timeout when zero UDP packets arrive (`15 s`).
+pub const DEFAULT_MEDIA_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Default ZRTP Echo probe timeout (`2000 ms`).
+pub const DEFAULT_ECHO_PROBE_TIMEOUT: Duration = Duration::from_millis(2000);
+
+/// Snapshot of the current 1-1 call state for IPC and tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallSnapshot {
+    pub phase: CallPhase,
+    pub call_id: Option<u32>,
+    pub peer_id: Option<String>,
+    pub peer_name: Option<String>,
+    pub peer_avatar: Option<String>,
+    pub is_incoming: bool,
+    pub is_muted: bool,
+    pub is_held: bool,
+    pub started_at_ms: Option<i64>,
+    pub end_reason: Option<String>,
+}
+
+#[derive(Debug)]
+enum MediaLoopCmd {
+    Stop { send_end_call_pkt: bool },
+    SetMuted(bool),
+}
+
+#[derive(Default)]
+struct CallManagerState {
+    session: CallSession,
+    peer_name: Option<String>,
+    peer_avatar: Option<String>,
+    relay_servers: Vec<RelayServerAddr>,
+    srtp_key: Option<SrtpKeyMaterial>,
+    started_at_ms: Option<i64>,
+    ring_timer_task: Option<tokio::task::JoinHandle<()>>,
+    media_task: Option<tokio::task::JoinHandle<()>>,
+    media_cmd_tx: Option<mpsc::UnboundedSender<MediaLoopCmd>>,
+    audio_device_opened_count: usize,
+}
+
+/// Coordinates the single active 1-1 ZRTC [`CallSession`] outside `CoreEngine::session` (`INV-9`).
+pub struct CallManager {
+    state: StdMutex<CallManagerState>,
+    ring_timeout: Duration,
+    media_watchdog_timeout: Duration,
+    echo_probe_timeout: Duration,
+    force_null_audio: bool,
+}
+
+impl Default for CallManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CallManager {
+    /// Create a [`CallManager`] with production ZRTC timeouts (`60s` ring, `15s` watchdog, `2000ms` echo).
+    pub fn new() -> Self {
+        Self {
+            state: StdMutex::new(CallManagerState::default()),
+            ring_timeout: DEFAULT_RING_TIMEOUT,
+            media_watchdog_timeout: DEFAULT_MEDIA_WATCHDOG_TIMEOUT,
+            echo_probe_timeout: DEFAULT_ECHO_PROBE_TIMEOUT,
+            force_null_audio: false,
+        }
+    }
+
+    /// Create a [`CallManager`] with custom timeouts and null audio (used by unit/integration tests).
+    pub fn with_timeouts(
+        ring_timeout: Duration,
+        media_watchdog_timeout: Duration,
+        echo_probe_timeout: Duration,
+    ) -> Self {
+        Self {
+            state: StdMutex::new(CallManagerState::default()),
+            ring_timeout,
+            media_watchdog_timeout,
+            echo_probe_timeout,
+            force_null_audio: true,
+        }
+    }
+
+    /// Return a UI-safe snapshot of the current call state without touching `CoreEngine::session`.
+    pub fn snapshot(&self) -> CallSnapshot {
+        let g = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        snapshot_from_state(&g, None)
+    }
+
+    /// Number of times a real audio device was opened (used to verify `EDGE-5` headless guard).
+    pub fn audio_device_opened_count(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .audio_device_opened_count
+    }
+}
+
+fn to_call_phase(state: CallState) -> CallPhase {
+    match state {
+        CallState::Idle => CallPhase::Idle,
+        CallState::OutgoingRinging => CallPhase::OutgoingRinging,
+        CallState::IncomingRinging => CallPhase::IncomingRinging,
+        CallState::Connecting => CallPhase::Connecting,
+        CallState::Active => CallPhase::Active,
+        CallState::Ending => CallPhase::Ending,
+    }
+}
+
+fn end_reason_label(reason: CallEndReason) -> String {
+    match reason {
+        CallEndReason::Normal => "normal",
+        CallEndReason::Cancelled => "cancelled",
+        CallEndReason::Rejected => "rejected",
+        CallEndReason::Busy => "busy",
+        CallEndReason::RingTimeout => "ring_timeout",
+        CallEndReason::MediaTimeout => "media_timeout",
+        CallEndReason::PeerEnded => "peer_ended",
+        CallEndReason::NetworkError => "network_error",
+    }
+    .to_string()
+}
+
+fn snapshot_from_state(g: &CallManagerState, end_reason: Option<CallEndReason>) -> CallSnapshot {
+    CallSnapshot {
+        phase: to_call_phase(g.session.state()),
+        call_id: g.session.call_id(),
+        peer_id: g.session.peer_id().map(str::to_string),
+        peer_name: g.peer_name.clone(),
+        peer_avatar: g.peer_avatar.clone(),
+        is_incoming: g.session.direction() == Some(CallDirection::Incoming),
+        is_muted: g.session.is_muted(),
+        is_held: g.session.is_held(),
+        started_at_ms: g.started_at_ms,
+        end_reason: end_reason.map(end_reason_label),
+    }
+}
+
+impl CoreEngine {
+    /// Return the current 1-1 call snapshot (`INV-9`: never acquires `CoreEngine::session`).
+    pub fn call_snapshot(&self) -> CallSnapshot {
+        self.call_manager.snapshot()
+    }
+
+    /// Start an outgoing 1-1 audio call to `peer_id` (`11300 requestcall`).
+    ///
+    /// # Errors
+    /// Returns an error if another call is already active (`INV-7`), the user is not logged in,
+    /// or `requestcall` signaling fails.
+    pub async fn start_call(
+        self: &Arc<Self>,
+        peer_id: String,
+        peer_name: Option<String>,
+        peer_avatar: Option<String>,
+    ) -> Result<()> {
+        {
+            let g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if g.session.state() != CallState::Idle {
+                bail!("Đang có cuộc gọi khác");
+            }
+        }
+
+        // INV-9: clone Session under a short lock and drop it before any network/media I/O.
+        let s = self.session.lock().await.clone();
+        let resp = request_call(&s, &peer_id, 0, &ExtendData::default()).await?;
+        let call_id = resp
+            .call_id_u32()
+            .ok_or_else(|| anyhow::anyhow!("Thiếu callId từ máy chủ"))?;
+        let sess_id = resp
+            .sess_id_str()
+            .unwrap_or_else(|| format!("sess-{call_id}"));
+        let srtp_mode = resp.parsed_extend_data().srtp_mode;
+        let relays = resp.relay_servers();
+        let srtp_key = resp.srtp_key_material();
+
+        let (resolved_name, resolved_avatar) =
+            self.resolve_call_peer(&peer_id, peer_name, peer_avatar);
+
+        let effects = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.peer_name = resolved_name;
+            g.peer_avatar = resolved_avatar;
+            g.relay_servers = relays;
+            g.srtp_key = srtp_key;
+            g.started_at_ms = None;
+            g.session.apply(CallEvent::StartOutgoing {
+                call_id,
+                sess_id,
+                peer_id,
+                srtp_mode,
+            })?
+        };
+
+        self.execute_call_effects(&s, effects).await;
+        Ok(())
+    }
+
+    /// Accept (`accept = true`) or reject (`accept = false`) the current incoming call (`11303 answer`).
+    ///
+    /// # Errors
+    /// Returns an error if no matching incoming ringing call is active.
+    pub async fn answer_call(self: &Arc<Self>, accept: bool) -> Result<()> {
+        let s = self.session.lock().await.clone();
+        let (call_id, effects) = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(cid) = g.session.call_id() else {
+                bail!("Không có cuộc gọi đến nào đang đổ chuông");
+            };
+            let ev = if accept {
+                CallEvent::AcceptIncoming { call_id: cid }
+            } else {
+                CallEvent::RejectIncoming { call_id: cid }
+            };
+            (cid, g.session.apply(ev)?)
+        };
+        let _ = call_id;
+        self.execute_call_effects(&s, effects).await;
+        Ok(())
+    }
+
+    /// End or cancel the current call (`11305 cancel` / `11306 endcall`, `ADV-4` idempotent).
+    pub async fn end_call(self: &Arc<Self>) -> Result<()> {
+        let effects = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.session.apply(CallEvent::LocalEnd)?
+        };
+        if effects.is_empty() {
+            return Ok(());
+        }
+        let s = self.session.lock().await.clone();
+        self.execute_call_effects(&s, effects).await;
+        Ok(())
+    }
+
+    /// Mute or unmute local microphone during an active call (`12006 conf`).
+    pub async fn set_call_muted(self: &Arc<Self>, muted: bool) -> Result<()> {
+        let effects = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.session.apply(CallEvent::SetMuted { muted })?
+        };
+        if effects.is_empty() {
+            return Ok(());
+        }
+        let s = self.session.lock().await.clone();
+        self.execute_call_effects(&s, effects).await;
+        Ok(())
+    }
+
+    /// Put the active call on hold or resume (`11307 holdreq` / `11309 unholdreq`).
+    pub async fn set_call_held(self: &Arc<Self>, held: bool) -> Result<()> {
+        let effects = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.session.apply(CallEvent::SetHeld { held })?
+        };
+        if effects.is_empty() {
+            return Ok(());
+        }
+        let s = self.session.lock().await.clone();
+        self.execute_call_effects(&s, effects).await;
+        Ok(())
+    }
+
+    /// Dispatch a parsed VoIP signaling event (`401..409`) from WS `604` or `601..603`.
+    pub async fn handle_voip_signal(
+        self: &Arc<Self>,
+        s_snap: &Session,
+        signal: CallSignalWireData,
+    ) {
+        let Some(code) = signal.signal_code() else {
+            return;
+        };
+        let Some(call_id) = signal.call_id_u32() else {
+            return;
+        };
+
+        // EDGE-5: Headless mode (`--mcp` / `--api-only`, `NoopEventSink`) ignores 401 invites,
+        // never auto-answers, and never opens a microphone or audio device.
+        if self.sink.is_headless() {
+            if code == CallSignalCode::RequestCall {
+                crate::logger::log_error(
+                    "call::headless",
+                    &format!("ignored incoming 401 invite call_id={call_id}"),
+                );
+            }
+            return;
+        }
+
+        let effects = match code {
+            CallSignalCode::RequestCall => {
+                if signal.is_video_call() {
+                    crate::logger::log_error(
+                        "call::signal",
+                        &format!("ignored unsupported video call invite call_id={call_id}"),
+                    );
+                    return;
+                }
+                let peer_id = signal
+                    .caller_id_str()
+                    .or_else(|| signal.callee_id_str())
+                    .unwrap_or_default();
+                if peer_id.is_empty() {
+                    return;
+                }
+                let sess_id = signal
+                    .sess_id_str()
+                    .unwrap_or_else(|| format!("sess-{call_id}"));
+                let srtp_mode = signal.parsed_extend_data().srtp_mode;
+                let relays = signal.relay_servers();
+                let srtp_key = signal.srtp_key_material();
+                let (resolved_name, resolved_avatar) = self.resolve_call_peer(&peer_id, None, None);
+
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let was_idle = g.session.state() == CallState::Idle;
+                let res = g.session.apply(CallEvent::IncomingInvite {
+                    call_id,
+                    sess_id,
+                    peer_id,
+                    srtp_mode,
+                });
+                match res {
+                    Ok(effs) => {
+                        if was_idle && g.session.state() == CallState::IncomingRinging {
+                            g.peer_name = resolved_name;
+                            g.peer_avatar = resolved_avatar;
+                            g.relay_servers = relays;
+                            g.srtp_key = srtp_key;
+                            g.started_at_ms = None;
+                        }
+                        effs
+                    }
+                    Err(_) => return,
+                }
+            }
+            CallSignalCode::RingRing => {
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.session
+                    .apply(CallEvent::PeerRingRing { call_id })
+                    .unwrap_or_default()
+            }
+            CallSignalCode::Answer => {
+                let accepted = signal.status_i64().unwrap_or(0) == 0;
+                let relays = signal.relay_servers();
+                let srtp_key = signal.srtp_key_material();
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if accepted {
+                    if !relays.is_empty() {
+                        g.relay_servers = relays;
+                    }
+                    if srtp_key.is_some() {
+                        g.srtp_key = srtp_key;
+                    }
+                }
+                g.session
+                    .apply(CallEvent::PeerAnswered { call_id, accepted })
+                    .unwrap_or_default()
+            }
+            CallSignalCode::Cancel => {
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.session
+                    .apply(CallEvent::PeerCancelled { call_id })
+                    .unwrap_or_default()
+            }
+            CallSignalCode::EndCall => {
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.session
+                    .apply(CallEvent::PeerEnded { call_id })
+                    .unwrap_or_default()
+            }
+            _ => return,
+        };
+
+        if !effects.is_empty() {
+            self.execute_call_effects(s_snap, effects).await;
+        }
+    }
+
+    fn resolve_call_peer(
+        &self,
+        peer_id: &str,
+        explicit_name: Option<String>,
+        explicit_avatar: Option<String>,
+    ) -> (Option<String>, Option<String>) {
+        if explicit_name.is_some() {
+            return (explicit_name, explicit_avatar);
+        }
+        let threads = self.known_threads_snapshot();
+        let found_name = threads
+            .iter()
+            .find(|(id, _, _)| id == peer_id)
+            .map(|(_, name, _)| name.clone());
+        (found_name, explicit_avatar)
+    }
+
+    fn emit_call_snapshot(&self, end_reason: Option<CallEndReason>) {
+        let snap = {
+            let g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            snapshot_from_state(&g, end_reason)
+        };
+        self.emit(CoreEvent::CallStateChanged {
+            phase: snap.phase,
+            call_id: snap.call_id,
+            peer_id: snap.peer_id,
+            peer_name: snap.peer_name,
+            peer_avatar: snap.peer_avatar,
+            is_incoming: snap.is_incoming,
+            is_muted: snap.is_muted,
+            is_held: snap.is_held,
+            started_at_ms: snap.started_at_ms,
+            end_reason: snap.end_reason,
+        });
+    }
+
+    async fn execute_call_effects(self: &Arc<Self>, s_snap: &Session, effects: Vec<CallEffect>) {
+        let mut needs_teardown_complete = false;
+        let mut finished_reason: Option<CallEndReason> = None;
+
+        for eff in effects {
+            match eff {
+                CallEffect::StateChanged(new_state) => {
+                    match new_state {
+                        CallState::OutgoingRinging | CallState::IncomingRinging => {
+                            self.arm_ring_timer();
+                        }
+                        CallState::Connecting => {
+                            self.cancel_ring_timer();
+                        }
+                        CallState::Active => {
+                            self.cancel_ring_timer();
+                            let mut g = self
+                                .call_manager
+                                .state
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            if g.started_at_ms.is_none() {
+                                g.started_at_ms = Some(now_ms() as i64);
+                            }
+                        }
+                        CallState::Ending => {
+                            self.cancel_ring_timer();
+                        }
+                        CallState::Idle => {
+                            self.cancel_ring_timer();
+                        }
+                    }
+                    self.emit_call_snapshot(finished_reason);
+                }
+                CallEffect::SendSignal(sig) => {
+                    self.dispatch_outbound_signal(s_snap, sig).await;
+                }
+                CallEffect::RejectBusy {
+                    call_id,
+                    sess_id,
+                    peer_id,
+                } => {
+                    // INV-7 / ADV-2: reject 2nd incoming call in background without touching active call.
+                    let s_clone = s_snap.clone();
+                    tokio::spawn(async move {
+                        let _ = answer_call(
+                            &s_clone,
+                            &peer_id,
+                            call_id,
+                            &sess_id,
+                            1,
+                            &ExtendData::default(),
+                        )
+                        .await;
+                    });
+                }
+                CallEffect::StartZrtpAndMedia => {
+                    self.start_media_loop(s_snap);
+                }
+                CallEffect::StopZrtpAndMedia { send_end_call_pkt } => {
+                    self.stop_media_loop(send_end_call_pkt).await;
+                    needs_teardown_complete = true;
+                }
+                CallEffect::MuteChanged(muted) => {
+                    let tx = {
+                        let g = self
+                            .call_manager
+                            .state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        g.media_cmd_tx.clone()
+                    };
+                    if let Some(tx) = tx {
+                        let _ = tx.send(MediaLoopCmd::SetMuted(muted));
+                    }
+                    self.emit_call_snapshot(None);
+                }
+                CallEffect::HoldChanged(_) => {
+                    self.emit_call_snapshot(None);
+                }
+                CallEffect::CallFinished { reason, .. } => {
+                    finished_reason = Some(reason);
+                }
+            }
+        }
+
+        if needs_teardown_complete {
+            let (call_id, sess_id, peer_id, duration_secs, teardown_effects) = {
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let cid = g.session.call_id().unwrap_or(0);
+                let sid = g.session.sess_id().unwrap_or_default().to_string();
+                let pid = g.session.peer_id().unwrap_or_default().to_string();
+                let dur = g
+                    .started_at_ms
+                    .map(|st| (((now_ms() as i64) - st).max(0) / 1000) as u64)
+                    .unwrap_or(0);
+                let effs = g
+                    .session
+                    .apply(CallEvent::TeardownComplete)
+                    .unwrap_or_default();
+                g.peer_name = None;
+                g.peer_avatar = None;
+                g.relay_servers.clear();
+                g.srtp_key = None;
+                g.started_at_ms = None;
+                (cid, sid, pid, dur, effs)
+            };
+
+            let mut end_reason_for_idle = None;
+            for eff in teardown_effects {
+                match eff {
+                    CallEffect::SendSignal(CallSignalCode::LogEndCall) => {
+                        if call_id != 0 && !peer_id.is_empty() && s_snap.has_live_credentials() {
+                            let _ =
+                                log_end_call(s_snap, &peer_id, call_id, &sess_id, duration_secs, 0)
+                                    .await;
+                        }
+                    }
+                    CallEffect::CallFinished { reason, .. } => {
+                        end_reason_for_idle = Some(reason);
+                    }
+                    CallEffect::StateChanged(CallState::Idle) => {
+                        self.emit_call_snapshot(end_reason_for_idle);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    async fn dispatch_outbound_signal(&self, s_snap: &Session, sig: CallSignalCode) {
+        if !s_snap.has_live_credentials() {
+            return;
+        }
+        let (call_id, sess_id, peer_id, is_muted) = {
+            let g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            (
+                g.session.call_id().unwrap_or(0),
+                g.session.sess_id().unwrap_or_default().to_string(),
+                g.session.peer_id().unwrap_or_default().to_string(),
+                g.session.is_muted(),
+            )
+        };
+        if call_id == 0 || peer_id.is_empty() {
+            return;
+        }
+
+        let res = match sig {
+            CallSignalCode::Request => {
+                send_request(s_snap, &peer_id, call_id, &sess_id, &ExtendData::default()).await
+            }
+            CallSignalCode::RingRing => {
+                send_ring_ring(s_snap, &peer_id, call_id, &sess_id, 0).await
+            }
+            CallSignalCode::Answer => {
+                let status = {
+                    let g = self
+                        .call_manager
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if g.session.state() == CallState::Ending {
+                        1
+                    } else {
+                        0
+                    }
+                };
+                answer_call(
+                    s_snap,
+                    &peer_id,
+                    call_id,
+                    &sess_id,
+                    status,
+                    &ExtendData::default(),
+                )
+                .await
+            }
+            CallSignalCode::AnswerAck => send_answer_ack(s_snap, &peer_id, call_id, &sess_id).await,
+            CallSignalCode::Cancel => cancel_call(s_snap, &peer_id, call_id, &sess_id).await,
+            CallSignalCode::EndCall => {
+                send_end_call_http(s_snap, &peer_id, call_id, &sess_id, 0).await
+            }
+            CallSignalCode::HoldReq => hold_request(s_snap, &peer_id, call_id, &sess_id).await,
+            CallSignalCode::UnholdReq => unhold_request(s_snap, &peer_id, call_id, &sess_id).await,
+            CallSignalCode::Conf => {
+                send_conf(s_snap, &peer_id, call_id, false, !is_muted, None).await
+            }
+            _ => return,
+        };
+
+        if let Err(e) = res {
+            crate::logger::log_error("call::signal", &format!("signal {sig:?} failed: {e}"));
+        }
+    }
+
+    fn arm_ring_timer(self: &Arc<Self>) {
+        self.cancel_ring_timer();
+        let engine = Arc::clone(self);
+        let timeout = self.call_manager.ring_timeout;
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(timeout).await;
+            let effects = {
+                let mut g = engine
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.ring_timer_task = None;
+                g.session.apply(CallEvent::RingTimeout).unwrap_or_default()
+            };
+            if !effects.is_empty() {
+                let s = engine.session.lock().await.clone();
+                engine.execute_call_effects(&s, effects).await;
+            }
+        });
+        let mut g = self
+            .call_manager
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        g.ring_timer_task = Some(handle);
+    }
+
+    fn cancel_ring_timer(&self) {
+        let handle = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.ring_timer_task.take()
+        };
+        if let Some(h) = handle {
+            h.abort();
+        }
+    }
+
+    fn start_media_loop(self: &Arc<Self>, s_snap: &Session) {
+        let already_running = {
+            let g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            g.media_task.is_some()
+        };
+        if already_running {
+            return;
+        }
+
+        let (call_id, sess_id, peer_id, is_caller, relays, srtp_key) = {
+            let g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            (
+                g.session.call_id().unwrap_or(0),
+                g.session.sess_id().unwrap_or_default().to_string(),
+                g.session.peer_id().unwrap_or_default().to_string(),
+                g.session.direction() == Some(CallDirection::Outgoing),
+                g.relay_servers.clone(),
+                g.srtp_key.clone(),
+            )
+        };
+        let uid: u32 = s_snap
+            .login
+            .as_ref()
+            .and_then(|l| l.uin.parse::<u32>().ok())
+            .unwrap_or(0);
+        let peer_uid: u32 = peer_id.parse::<u32>().unwrap_or(0);
+        let is_headless = self.sink.is_headless();
+        let force_null_audio = self.call_manager.force_null_audio;
+        let echo_timeout = self.call_manager.echo_probe_timeout;
+        let watchdog_timeout = self.call_manager.media_watchdog_timeout;
+
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<MediaLoopCmd>();
+        let engine = Arc::clone(self);
+        let s_clone = s_snap.clone();
+
+        let handle = tokio::spawn(async move {
+            let socket = match UdpSocket::bind("0.0.0.0:0").await {
+                Ok(sock) => sock,
+                Err(e) => {
+                    crate::logger::log_error("call::udp", &format!("UDP bind failed: {e}"));
+                    return;
+                }
+            };
+
+            let relay_addr: Option<SocketAddr> =
+                select_relay_with_echo(&socket, &relays, uid, echo_timeout).await;
+
+            // Send InitZRTP (cmd = 11 caller / 12 callee) when relay is available.
+            let mut server_token = 0u32;
+            if let Some(target) = relay_addr {
+                let init_pkt =
+                    ZRTPPacket::init_call(is_caller, 1, uid, call_id, peer_uid, sess_id.clone());
+                let _ = socket.send_to(&init_pkt.encode(), target).await;
+
+                // Wait briefly for InitResponse (0x02) before proceeding.
+                let mut buf = [0u8; 2048];
+                if let Ok(Ok((n, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), socket.recv_from(&mut buf))
+                        .await
+                {
+                    if let Ok(ZRTPPacket::Control { token, .. }) = ZRTPPacket::decode(&buf[..n]) {
+                        server_token = token;
+                    }
+                }
+            }
+
+            // Transition Connecting -> Active when ZRTP/media is ready.
+            let ready_effects = {
+                let mut g = engine
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.session
+                    .apply(CallEvent::MediaReady { call_id })
+                    .unwrap_or_default()
+            };
+            if !ready_effects.is_empty() {
+                engine.execute_call_effects(&s_clone, ready_effects).await;
+            }
+
+            // EDGE-5: never open hardware audio devices in headless mode.
+            let muted_flag = Arc::new(AtomicBool::new(false));
+            let stop_audio_flag = Arc::new(AtomicBool::new(false));
+            let (tx_pcm_up, mut rx_pcm_up) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
+            let (tx_pcm_down, rx_pcm_down) = mpsc::channel::<[i16; FRAME_SAMPLES]>(16);
+
+            let _audio_thread = if !is_headless
+                && !force_null_audio
+                && cfg!(all(feature = "call", target_os = "linux"))
+            {
+                {
+                    let mut g = engine
+                        .call_manager
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    g.audio_device_opened_count += 1;
+                }
+                spawn_audio_thread(
+                    Arc::clone(&muted_flag),
+                    Arc::clone(&stop_audio_flag),
+                    tx_pcm_up,
+                    rx_pcm_down,
+                )
+            } else {
+                drop(tx_pcm_up);
+                drop(rx_pcm_down);
+                None
+            };
+
+            let mut srtp_tx = srtp_key
+                .as_ref()
+                .and_then(|k| SrtpContext::from_combined(k.as_bytes()).ok());
+            let mut srtp_rx = srtp_key
+                .as_ref()
+                .and_then(|k| SrtpContext::from_combined(k.as_bytes()).ok());
+
+            let mut encoder = create_opus_encoder();
+            let mut opus_out_buf = [0u8; 512];
+            let mut neteq = create_neteq();
+            let mut rtp_seq: u16 = 1;
+            let mut last_rx_at = Instant::now();
+            let mut recv_buf = [0u8; 2048];
+            let mut ping_tick = tokio::time::interval(Duration::from_secs(5));
+            let mut watchdog_tick = tokio::time::interval(Duration::from_millis(200));
+
+            loop {
+                tokio::select! {
+                    Some(cmd) = cmd_rx.recv() => {
+                        match cmd {
+                            MediaLoopCmd::SetMuted(m) => {
+                                muted_flag.store(m, Ordering::Relaxed);
+                            }
+                            MediaLoopCmd::Stop { send_end_call_pkt } => {
+                                if send_end_call_pkt {
+                                    if let Some(target) = relay_addr {
+                                        let end_pkt = ZRTPPacket::end_call(2, uid, server_token, call_id);
+                                        let _ = socket.send_to(&end_pkt.encode(), target).await;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    Some(pcm) = rx_pcm_up.recv() => {
+                        if let Some(target) = relay_addr {
+                            if !muted_flag.load(Ordering::Relaxed) {
+                                if let Ok(enc_len) = encoder.encode(&pcm, &mut opus_out_buf) {
+                                    if enc_len > 0 {
+                                        let rtp_pkt = build_minimal_rtp(rtp_seq, &opus_out_buf[..enc_len]);
+                                        rtp_seq = rtp_seq.wrapping_add(1);
+                                        let wire_rtp = if let Some(ctx) = srtp_tx.as_mut() {
+                                            ctx.protect_rtp(&rtp_pkt).unwrap_or(rtp_pkt)
+                                        } else {
+                                            rtp_pkt
+                                        };
+                                        let pkt = ZRTPPacket::RelayMediaUp {
+                                            msg_type: crate::protocol::call::zrtp::MSG_AUDIO_RTP_UP,
+                                            server_token,
+                                            payload: wire_rtp,
+                                        };
+                                        let _ = socket.send_to(&pkt.encode(), target).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok((n, _src)) = socket.recv_from(&mut recv_buf) => {
+                        last_rx_at = Instant::now();
+                        if let Ok(ZRTPPacket::RelayMediaDown { payload, .. }) = ZRTPPacket::decode(&recv_buf[..n]) {
+                            let plain_rtp = if let Some(ctx) = srtp_rx.as_mut() {
+                                match ctx.unprotect_rtp(&payload) {
+                                    Ok(p) => p,
+                                    Err(_) => continue, // ADV-3: drop bad SRTP HMAC
+                                }
+                            } else {
+                                payload
+                            };
+                            if plain_rtp.len() >= 12 {
+                                let seq = u16::from_be_bytes([plain_rtp[2], plain_rtp[3]]);
+                                neteq.push(seq, plain_rtp[12..].to_vec());
+                                let mut out_pcm = [0i16; FRAME_SAMPLES];
+                                if neteq.pop_frame(&mut out_pcm).is_ok() {
+                                    let _ = tx_pcm_down.try_send(out_pcm);
+                                }
+                            }
+                        }
+                    }
+                    _ = ping_tick.tick() => {
+                        if let Some(target) = relay_addr {
+                            let ping = ZRTPPacket::ping(0, uid, server_token, sess_id.clone());
+                            let _ = socket.send_to(&ping.encode(), target).await;
+                        }
+                    }
+                    _ = watchdog_tick.tick() => {
+                        if last_rx_at.elapsed() >= watchdog_timeout {
+                            let effs = {
+                                let mut g = engine
+                                    .call_manager
+                                    .state
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                g.session.apply(CallEvent::MediaWatchdogTimeout).unwrap_or_default()
+                            };
+                            if !effs.is_empty() {
+                                let eng = Arc::clone(&engine);
+                                let sc = s_clone.clone();
+                                tokio::spawn(async move {
+                                    eng.execute_call_effects(&sc, effs).await;
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            stop_audio_flag.store(true, Ordering::Relaxed);
+        });
+
+        let mut g = self
+            .call_manager
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        g.media_cmd_tx = Some(cmd_tx);
+        g.media_task = Some(handle);
+    }
+
+    async fn stop_media_loop(&self, send_end_call_pkt: bool) {
+        let (tx, handle) = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            (g.media_cmd_tx.take(), g.media_task.take())
+        };
+        if let Some(tx) = tx {
+            let _ = tx.send(MediaLoopCmd::Stop { send_end_call_pkt });
+        }
+        if let Some(h) = handle {
+            let _ = tokio::time::timeout(Duration::from_secs(2), h).await;
+        }
+    }
+}
+
+async fn select_relay_with_echo(
+    socket: &UdpSocket,
+    relays: &[RelayServerAddr],
+    uid: u32,
+    timeout: Duration,
+) -> Option<SocketAddr> {
+    let first_addr: Option<SocketAddr> = relays
+        .iter()
+        .find_map(|r| format!("{}:{}", r.ip, r.port).parse::<SocketAddr>().ok());
+    let fallback = first_addr?;
+
+    let echo_pkt = ZRTPPacket::Control {
+        is_reply: false,
+        magic: 1,
+        field02: 0,
+        seq: 0,
+        uid,
+        token: 0,
+        cmd: ZrtpCmd::Echo as u16,
+        sub_cmd: 0,
+        body: ControlBody::Echo(unix_now().to_string()),
+    };
+    let encoded = echo_pkt.encode();
+    for r in relays {
+        if let Ok(addr) = format!("{}:{}", r.ip, r.port).parse::<SocketAddr>() {
+            let _ = socket.send_to(&encoded, addr).await;
+        }
+    }
+
+    let mut buf = [0u8; 512];
+    if let Ok(Ok((_n, from))) = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await {
+        return Some(from);
+    }
+    Some(fallback)
+}
+
+fn build_minimal_rtp(seq: u16, payload: &[u8]) -> Vec<u8> {
+    let mut rtp = Vec::with_capacity(12 + payload.len());
+    rtp.push(0x80);
+    rtp.push(111); // Opus payload type
+    rtp.extend_from_slice(&seq.to_be_bytes());
+    rtp.extend_from_slice(&((seq as u32) * (FRAME_SAMPLES as u32)).to_be_bytes());
+    rtp.extend_from_slice(&1u32.to_be_bytes());
+    rtp.extend_from_slice(payload);
+    rtp
+}
+
+fn create_opus_encoder() -> Box<dyn OpusEncoderBackend> {
+    #[cfg(feature = "call")]
+    if let Ok(enc) = crate::services::call_media::LibOpusEncoder::new(24_000) {
+        return Box::new(enc);
+    }
+    Box::new(NullOpusEncoder)
+}
+
+fn create_neteq() -> NetEq<Box<dyn OpusDecoderBackend>> {
+    let dec: Box<dyn OpusDecoderBackend> = {
+        #[cfg(feature = "call")]
+        {
+            match crate::services::call_media::LibOpusDecoder::new() {
+                Ok(d) => Box::new(d),
+                Err(_) => Box::new(NullOpusDecoder),
+            }
+        }
+        #[cfg(not(feature = "call"))]
+        {
+            Box::new(NullOpusDecoder)
+        }
+    };
+    NetEq::new(dec, NetEqConfig::default())
+}
+
+impl OpusDecoderBackend for Box<dyn OpusDecoderBackend> {
+    fn decode(&mut self, packet: &[u8], pcm: &mut [i16], decode_fec: bool) -> Result<usize> {
+        (**self).decode(packet, pcm, decode_fec)
+    }
+
+    fn decode_plc(&mut self, pcm: &mut [i16], frame_samples: usize) -> Result<usize> {
+        (**self).decode_plc(pcm, frame_samples)
+    }
+}
+
+fn spawn_audio_thread(
+    muted: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    tx_up: mpsc::Sender<[i16; FRAME_SAMPLES]>,
+    mut rx_down: mpsc::Receiver<[i16; FRAME_SAMPLES]>,
+) -> Option<std::thread::JoinHandle<()>> {
+    #[cfg(all(feature = "call", target_os = "linux"))]
+    {
+        use crate::services::call_media::{AudioBackend, PulseAudioBackend};
+        Some(std::thread::spawn(move || {
+            let mut backend: Box<dyn AudioBackend> = match PulseAudioBackend::open(None, None) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    crate::logger::log_error(
+                        "call::audio",
+                        &format!("PulseAudio open failed: {e}"),
+                    );
+                    Box::new(NullAudioBackend::new())
+                }
+            };
+            let mut cap_buf = [0i16; FRAME_SAMPLES];
+            let silence = [0i16; FRAME_SAMPLES];
+            while !stop.load(Ordering::Relaxed) {
+                if !muted.load(Ordering::Relaxed) && backend.read_frame(&mut cap_buf).is_ok() {
+                    let _ = tx_up.try_send(cap_buf);
+                }
+                let play_buf = rx_down.try_recv().unwrap_or(silence);
+                let _ = backend.write_frame(&play_buf);
+            }
+        }))
+    }
+    #[cfg(not(all(feature = "call", target_os = "linux")))]
+    {
+        let _ = (muted, stop, tx_up, &mut rx_down, NullAudioBackend::new());
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::events::CoreEventSink;
+    use serde_json::json;
+
+    struct CollectSink(Arc<StdMutex<Vec<CoreEvent>>>);
+
+    impl CoreEventSink for CollectSink {
+        fn emit(&self, ev: CoreEvent) {
+            self.0.lock().unwrap().push(ev);
+        }
+    }
+
+    fn test_signal(cmd: u16, call_id: u32, caller_id: &str) -> CallSignalWireData {
+        CallSignalWireData::from_value(&json!({
+            "cmd": cmd,
+            "callId": call_id,
+            "sessId": format!("sess-{call_id}"),
+            "callerId": caller_id,
+            "calleeId": "self-1",
+            "isVideo": 0,
+            "extendData": "{\"srtpMode\":1,\"maxFT\":60}"
+        }))
+    }
+
+    #[tokio::test]
+    async fn headless_engine_ignores_401_and_never_opens_audio_device() {
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::headless(session, ":memory:");
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        // EDGE-5: headless mode must ignore incoming 401 and stay Idle.
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 1001, "peer-1"))
+            .await;
+
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+        assert_eq!(engine.call_manager.audio_device_opened_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn incoming_401_emits_call_state_changed_and_enforces_single_call_invariant() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_db_path(session, ":memory:", sink);
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 2001, "peer-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::IncomingRinging);
+        assert_eq!(engine.call_snapshot().call_id, Some(2001));
+
+        // ADV-1: duplicate 401 for same callId is deduplicated.
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 2001, "peer-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().call_id, Some(2001));
+
+        // ADV-2 / INV-7: second 401 with different callId keeps first call undisturbed.
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 2002, "peer-2"))
+            .await;
+        assert_eq!(engine.call_snapshot().call_id, Some(2001));
+        assert_eq!(engine.call_snapshot().phase, CallPhase::IncomingRinging);
+
+        let captured = events.lock().unwrap();
+        assert!(captured.iter().any(|ev| matches!(
+            ev,
+            CoreEvent::CallStateChanged {
+                phase: CallPhase::IncomingRinging,
+                call_id: Some(2001),
+                is_incoming: true,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn ring_timeout_transitions_to_idle_and_emits_call_state_changed() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_millis(30),
+            Duration::from_secs(15),
+            Duration::from_millis(50),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 3001, "peer-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::IncomingRinging);
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+
+        let captured = events.lock().unwrap();
+        assert!(captured.iter().any(|ev| matches!(
+            ev,
+            CoreEvent::CallStateChanged {
+                phase: CallPhase::Idle,
+                end_reason: Some(r),
+                ..
+            } if r == "ring_timeout"
+        )));
+    }
+
+    #[tokio::test]
+    async fn media_watchdog_timeout_tears_down_active_call_to_idle() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_millis(60),
+            Duration::from_millis(20),
+        );
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 4001, "peer-1"))
+            .await;
+        engine.answer_call(true).await.unwrap();
+
+        // Wait for media watchdog to fire (> 60ms) with zero UDP packets arriving.
+        tokio::time::sleep(Duration::from_millis(320)).await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+
+        let captured = events.lock().unwrap();
+        assert!(captured.iter().any(|ev| matches!(
+            ev,
+            CoreEvent::CallStateChanged {
+                phase: CallPhase::Idle,
+                end_reason: Some(r),
+                ..
+            } if r == "media_timeout"
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_manager_is_isolated_from_session_mutex_and_end_is_idempotent() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_db_path(session, ":memory:", sink);
+        let s_snap = engine.session_arc().lock().await.clone();
+
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 5001, "peer-1"))
+            .await;
+
+        // INV-9: Holding CoreEngine::session mutex must not block call_snapshot().
+        let _session_guard = engine.session_arc().lock().await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::IncomingRinging);
+        drop(_session_guard);
+
+        // ADV-4: Concurrent local end + peer 409 end are idempotent.
+        engine.end_call().await.unwrap();
+        engine.end_call().await.unwrap();
+        engine
+            .handle_voip_signal(&s_snap, test_signal(409, 5001, "peer-1"))
+            .await;
+        assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+    }
+}

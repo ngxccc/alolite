@@ -127,6 +127,11 @@ async fn main() -> anyhow::Result<()> {
             commands::get_dev_diagnostics,
             commands::open_path_in_os,
             commands::spawn_multi_profile,
+            commands::start_call,
+            commands::answer_call,
+            commands::end_call,
+            commands::set_call_muted,
+            commands::set_call_held,
         ])
         .run(tauri::generate_context!())
         .map_err(|e| anyhow::anyhow!("Không thể khởi chạy AloLite Tauri: {e}"))?;

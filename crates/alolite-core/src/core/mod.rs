@@ -11,7 +11,7 @@ pub mod settings;
 pub mod stickers;
 
 pub use engine::{CoreEngine, CoreStatus};
-pub use events::{CoreEvent, CoreEventSink, CoreImageData, NoopEventSink};
+pub use events::{CallPhase, CoreEvent, CoreEventSink, CoreImageData, NoopEventSink};
 pub use ipc::{
     CoreBootstrapSnapshot, CoreEventDto, DevCryptoInfo, DevDiagnosticsSnapshot, ImportSummaryDto,
     PinnedPackMeta,

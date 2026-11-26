@@ -331,6 +331,96 @@ impl CallSignalWireData {
             .and_then(|v| ExtendData::from_value(v).ok())
             .unwrap_or_default()
     }
+
+    /// Parse relay server endpoints (`rtpIP` / `servers`) from signaling payloads.
+    pub fn relay_servers(&self) -> Vec<RelayServerAddr> {
+        fn parse_host_port(raw: &str, server_type: u8) -> Option<RelayServerAddr> {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Some((ip, port_str)) = trimmed.rsplit_once(':') {
+                if let Ok(port) = port_str.parse::<u16>() {
+                    if !ip.is_empty() && port > 0 {
+                        return Some(RelayServerAddr {
+                            ip: ip.to_string(),
+                            port,
+                            server_type,
+                        });
+                    }
+                }
+            }
+            None
+        }
+
+        let Some(val) = self.rtp_ip.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        match val {
+            Value::String(s) => {
+                for part in s.split(',') {
+                    if let Some(addr) = parse_host_port(part, 1) {
+                        out.push(addr);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for item in arr {
+                    match item {
+                        Value::String(s) => {
+                            if let Some(addr) = parse_host_port(s, 1) {
+                                out.push(addr);
+                            }
+                        }
+                        Value::Object(_) => {
+                            if let Ok(addr) =
+                                serde_json::from_value::<RelayServerAddr>(item.clone())
+                            {
+                                if !addr.ip.is_empty() && addr.port > 0 {
+                                    out.push(addr);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Value::Object(_) => {
+                if let Ok(addr) = serde_json::from_value::<RelayServerAddr>(val.clone()) {
+                    if !addr.ip.is_empty() && addr.port > 0 {
+                        out.push(addr);
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// Parse SRTP master key + salt (`30` bytes) from `srtpKey` / `key` / `srtp` (`INV-8`).
+    pub fn srtp_key_material(&self) -> Option<SrtpKeyMaterial> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+        let raw = wire::field_str(self.srtp_key.as_ref())?;
+        if let Ok(decoded) = STANDARD.decode(raw.as_bytes()) {
+            if decoded.len()
+                >= crate::protocol::call::SRTP_MASTER_KEY_LEN
+                    + crate::protocol::call::SRTP_MASTER_SALT_LEN
+            {
+                return Some(SrtpKeyMaterial::from_bytes(decoded));
+            }
+        }
+        let bytes = raw.into_bytes();
+        if bytes.len()
+            >= crate::protocol::call::SRTP_MASTER_KEY_LEN
+                + crate::protocol::call::SRTP_MASTER_SALT_LEN
+        {
+            Some(SrtpKeyMaterial::from_bytes(bytes))
+        } else {
+            None
+        }
+    }
 }
 
 /// Build `11300` `/api/voicecall/requestcall` parameters.

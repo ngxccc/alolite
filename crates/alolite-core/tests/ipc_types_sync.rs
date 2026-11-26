@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use alolite_core::common::logger::{FindingLevel, LogEntry, ScanFinding};
+use alolite_core::core::events::CallPhase;
 use alolite_core::core::ipc::{
     CoreBootstrapSnapshot, CoreEventDto, DevCryptoInfo, DevDiagnosticsSnapshot, ImportSummaryDto,
     PinnedPackMeta,
@@ -131,6 +132,7 @@ fn remap_integers_to_number(dt: &mut DataType) {
 pub fn generate_ipc_typescript() -> String {
     let types = Types::default()
         .register::<CoreEventDto>()
+        .register::<CallPhase>()
         .register::<CoreBootstrapSnapshot>()
         .register::<DevDiagnosticsSnapshot>()
         .register::<ImportSummaryDto>()

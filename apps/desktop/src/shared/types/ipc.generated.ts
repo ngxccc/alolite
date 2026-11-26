@@ -71,6 +71,9 @@ export type AutoReplyRule = {
 	scope?: string,
 };
 
+/**  UI-facing lifecycle phase of the single active 1-1 ZRTC audio call (`INV-7`). */
+export type CallPhase = "idle" | "outgoing_ringing" | "incoming_ringing" | "connecting" | "active" | "ending";
+
 /**
  *  Authenticate using phone number and password via v2 protocol (`POST /api/login/loginByPasswv2`).
  * 
@@ -303,6 +306,17 @@ export type CoreEventDto = { type: "NotificationAuthorization"; payload: {
 	name: string,
 	avatar: string | null,
 	threads: Thread[],
+} } | { type: "CallStateChanged"; payload: {
+	phase: CallPhase,
+	call_id: number | null,
+	peer_id: string | null,
+	peer_name: string | null,
+	peer_avatar: string | null,
+	is_incoming: boolean,
+	is_muted: boolean,
+	is_held: boolean,
+	started_at_ms: number | null,
+	end_reason: string | null,
 } };
 
 /**  Outbound message transmission lifecycle state. */

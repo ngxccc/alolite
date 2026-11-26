@@ -577,3 +577,49 @@ pub fn spawn_multi_profile(profile: String) -> Result<(), String> {
     cmd.arg("--profile").arg(clean);
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn start_call(
+    state: State<'_, AppCoreState>,
+    peer_id: String,
+    peer_name: Option<String>,
+    peer_avatar: Option<String>,
+) -> Result<(), String> {
+    state
+        .engine
+        .start_call(peer_id, peer_name, peer_avatar)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn answer_call(state: State<'_, AppCoreState>, accept: bool) -> Result<(), String> {
+    state
+        .engine
+        .answer_call(accept)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn end_call(state: State<'_, AppCoreState>) -> Result<(), String> {
+    state.engine.end_call().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_call_muted(state: State<'_, AppCoreState>, muted: bool) -> Result<(), String> {
+    state
+        .engine
+        .set_call_muted(muted)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_call_held(state: State<'_, AppCoreState>, held: bool) -> Result<(), String> {
+    state
+        .engine
+        .set_call_held(held)
+        .await
+        .map_err(|e| e.to_string())
+}

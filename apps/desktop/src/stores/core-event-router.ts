@@ -6,6 +6,7 @@ import type {
 } from "@/shared/types/ipc.generated";
 import { formatClockNow } from "@/shared/utils/text";
 import { useAuthStore } from "./use-auth-store";
+import { useCallStore } from "./use-call-store";
 import { useChatStore } from "./use-chat-store";
 import { useContactsStore } from "./use-contacts-store";
 import { useMediaCacheStore } from "./use-media-cache-store";
@@ -106,6 +107,7 @@ export function dispatchCoreEvent(event: CoreEventDto): void {
       chat.resetChatSession();
       contacts.resetContacts();
       media.resetMediaCache();
+      useCallStore.getState().resetCall();
       ui.setSettingsOpen(false);
       ui.setStatusMessage(event.type === "SessionExpired" ? event.payload.message : "Đã đăng xuất");
       return;
@@ -122,6 +124,7 @@ export function dispatchCoreEvent(event: CoreEventDto): void {
       chat.resetChatSession();
       contacts.resetContacts();
       media.resetMediaCache();
+      useCallStore.getState().resetCall();
       chat.setThreads(sorted);
       chat.selectThread(sorted[0]?.id ?? null);
       ui.setSettingsOpen(false);
@@ -395,6 +398,10 @@ export function dispatchCoreEvent(event: CoreEventDto): void {
       if (event.payload.online) {
         contacts.setUserOnline(event.payload.user_id, event.payload.online);
       }
+      return;
+
+    case "CallStateChanged":
+      useCallStore.getState().applyCallState(event.payload);
       return;
   }
 }
