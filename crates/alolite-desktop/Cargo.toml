@@ -8,7 +8,7 @@ license-file.workspace = true
 description = "AloLite Desktop UI Host (Tauri v2 + TypeScript)"
 
 [features]
-default = ["custom-protocol"]
+default = ["custom-protocol", "call"]
 custom-protocol = ["tauri/custom-protocol"]
 call = ["alolite-core/call"]
 
