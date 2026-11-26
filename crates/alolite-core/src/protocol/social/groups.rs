@@ -52,10 +52,15 @@ fn value_str(v: &Value) -> Option<String> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GroupInfoWireData {
-    #[serde(alias = "groupName", alias = "displayName")]
     pub name: Option<Value>,
-    #[serde(rename = "fullAvt", alias = "avt", alias = "avatar")]
+    #[serde(rename = "groupName")]
+    pub group_name: Option<Value>,
+    #[serde(rename = "displayName")]
+    pub display_name_field: Option<Value>,
+    #[serde(rename = "fullAvt")]
     pub full_avt: Option<Value>,
+    pub avt: Option<Value>,
+    pub avatar: Option<Value>,
     #[serde(rename = "totalMember")]
     pub total_member: Option<Value>,
     #[serde(rename = "memVerList")]
@@ -67,19 +72,19 @@ pub struct GroupInfoWireData {
 }
 
 impl GroupInfoWireData {
-    /// Group display name (`name` / `groupName` / `displayName`).
+    /// Group display name (`name` > `groupName` > `displayName`).
     pub fn display_name(&self) -> Option<String> {
-        self.name
-            .as_ref()
-            .and_then(value_str)
+        [&self.name, &self.group_name, &self.display_name_field]
+            .into_iter()
+            .find_map(|v| v.as_ref().and_then(value_str))
             .filter(|s| !s.is_empty())
     }
 
-    /// Group avatar URL, ignoring upstream `/default` placeholders.
+    /// Group avatar URL (`fullAvt` > `avt` > `avatar`), ignoring upstream `/default` placeholders.
     pub fn avatar(&self) -> Option<String> {
-        self.full_avt
-            .as_ref()
-            .and_then(value_str)
+        [&self.full_avt, &self.avt, &self.avatar]
+            .into_iter()
+            .find_map(|v| v.as_ref().and_then(value_str))
             .filter(|u| !u.ends_with("/default"))
     }
 
@@ -233,10 +238,17 @@ impl GroupProfilesWireData {
         self.grid_info_map
             .iter()
             .map(|(k, v)| {
-                (
-                    k.clone(),
-                    serde_json::from_value::<GroupInfoWireData>(v.clone()).unwrap_or_default(),
-                )
+                let parsed = match serde_json::from_value::<GroupInfoWireData>(v.clone()) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        crate::logger::log_error(
+                            "groups::typed_info_map",
+                            &format!("failed to decode group {k}: {e}"),
+                        );
+                        GroupInfoWireData::default()
+                    }
+                };
+                (k.clone(), parsed)
             })
             .collect()
     }
@@ -279,6 +291,15 @@ pub async fn fetch_group_profiles(
     );
     let mg_resp = s.post_form(&mg_url, format!("params={params}")).await?;
     let mut mg_dec = s.maybe_decrypt(mg_resp, s.session_key_bytes()).await;
+    if let Some(code) = mg_dec.get("error_code").and_then(Value::as_i64) {
+        if code != 0 {
+            let msg = mg_dec
+                .get("error_message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            anyhow::bail!("getmg-v2 failed with error_code {code}: {msg}");
+        }
+    }
     if let Some(d_str) = mg_dec.get("data").and_then(Value::as_str) {
         if let Ok(parsed) = serde_json::from_str::<Value>(d_str.trim()) {
             mg_dec["data"] = parsed;
@@ -401,6 +422,15 @@ pub async fn get_groups(s: &Session) -> Result<Vec<Thread>> {
     );
     let resp = s.get(&url).await?;
     let mut resp = s.maybe_decrypt(resp, s.session_key_bytes()).await;
+    if let Some(code) = resp.get("error_code").and_then(Value::as_i64) {
+        if code != 0 {
+            let msg = resp
+                .get("error_message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            anyhow::bail!("getlg/v4 failed with error_code {code}: {msg}");
+        }
+    }
     if let Some(d_str) = resp.get("data").and_then(Value::as_str) {
         if let Ok(parsed) = serde_json::from_str::<Value>(d_str.trim()) {
             resp["data"] = parsed;
@@ -530,6 +560,15 @@ pub async fn get_mini_profiles(
     );
     let resp = s.post_form(&url, format!("params={params}")).await?;
     let mut resp = s.maybe_decrypt(resp, s.session_key_bytes()).await;
+    if let Some(code) = resp.get("error_code").and_then(Value::as_i64) {
+        if code != 0 {
+            let msg = resp
+                .get("error_message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            anyhow::bail!("getlg/v4 failed with error_code {code}: {msg}");
+        }
+    }
     if let Some(d_str) = resp.get("data").and_then(Value::as_str) {
         if let Ok(parsed) = serde_json::from_str::<Value>(d_str.trim()) {
             resp["data"] = parsed;
@@ -647,15 +686,23 @@ pub async fn resolve_thread_names(s: &Session, threads: &mut [Thread]) {
     let mut group_info_map: BTreeMap<String, GroupInfoWireData> = BTreeMap::new();
     if !unknown_group_ids.is_empty() {
         for chunk in unknown_group_ids.chunks(50) {
-            if let Ok((info_map, _)) = fetch_group_profiles(s, chunk).await {
-                for (k, v) in info_map {
-                    let (all_mids, _) = extract_all_group_member_ids(&v);
-                    for uid in all_mids {
-                        if !need_mem_uids.iter().any(|x| x == &uid) {
-                            need_mem_uids.push(uid);
+            match fetch_group_profiles(s, chunk).await {
+                Ok((info_map, _)) => {
+                    for (k, v) in info_map {
+                        let (all_mids, _) = extract_all_group_member_ids(&v);
+                        for uid in all_mids {
+                            if !need_mem_uids.iter().any(|x| x == &uid) {
+                                need_mem_uids.push(uid);
+                            }
                         }
+                        group_info_map.insert(k, v);
                     }
-                    group_info_map.insert(k, v);
+                }
+                Err(e) => {
+                    crate::logger::log_error(
+                        "groups::resolve_thread_names::fetch_group_profiles",
+                        &e.to_string(),
+                    );
                 }
             }
         }
@@ -817,5 +864,36 @@ pub async fn resolve_thread_names(s: &Session, threads: &mut [Thread]) {
                 t.avatar = Some(new_multi);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_info_map_decodes_when_avt_and_full_avt_coexist() {
+        let payload = json!({
+            "gridInfoMap": {
+                "1234567890": {
+                    "name": "Team AloLite",
+                    "groupName": "Team AloLite",
+                    "avt": "https://s120-ava-grp-talk.zadn.vn/small.jpg",
+                    "fullAvt": "https://s120-ava-grp-talk.zadn.vn/full.jpg",
+                    "totalMember": 12,
+                    "memVerList": ["1001_0", "1002_0"]
+                }
+            },
+            "removedsGroup": []
+        });
+        let wire: GroupProfilesWireData = serde_json::from_value(payload).unwrap();
+        let map = wire.typed_info_map();
+        let info = map.get("1234567890").unwrap();
+        assert_eq!(info.display_name().as_deref(), Some("Team AloLite"));
+        assert_eq!(
+            info.avatar().as_deref(),
+            Some("https://s120-ava-grp-talk.zadn.vn/full.jpg")
+        );
+        assert_eq!(info.total_member(), 12);
     }
 }

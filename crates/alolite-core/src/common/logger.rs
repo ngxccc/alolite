@@ -114,6 +114,7 @@ pub fn log_error(context: &str, err: &str) {
     if !is_dev_mode() {
         return;
     }
+    eprintln!("[alolite::err] {context}: {err}");
     let now = crate::clock::unix_now();
     let time_str = format!(
         "{:02}:{:02}:{:02}",
