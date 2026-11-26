@@ -9,12 +9,15 @@
 - [ADR 0002: Protocol Module Boundaries](adr/0002-protocol-module-boundaries.md)
 - [ADR 0003: Tauri v2 UI Architecture](adr/0003-tauri-feature-ui-architecture.md)
 - [ADR 0004: Workspace & Desktop Separation](adr/0004-cargo-workspace-and-desktop-separation.md)
+- [ADR 0005: Retain Tauri v2 over Qt6 and Native GUI Toolkits](adr/0005-retain-tauri-v2-over-qt6-and-native-gui-toolkits.md)
 - [ADR 0006: Frontend Domain Stores & Selector Discipline](adr/0006-frontend-domain-stores-and-selector-discipline.md)
 - [ADR 0007: shadcn/ui Base UI & Zinc Design System](adr/0007-shadcn-base-ui-and-zinc-design-system.md)
 
 # Engineering Standards
 
 - [API Design & Error Handling](standards/api-design-and-error-handling.md)
+- [CI, Release & Automation](standards/ci-and-release.md)
+- [Code Review](standards/code-review.md)
 - [Comment & Docstring Taxonomy](standards/code-comment-taxonomy.md)
 - [Compliance, IP & Clean-Room](standards/compliance-and-ip.md)
 - [Concurrency & Locking](standards/concurrency-and-locking.md)
@@ -24,3 +27,4 @@
 - [Issue Tracking & Tickets](standards/issue-tracker.md)
 - [Security & Cryptography](standards/security-and-cryptography.md)
 - [Testing & Fixtures](standards/testing-and-fixtures.md)
+- [UI & Frontend](standards/ui-and-frontend.md)

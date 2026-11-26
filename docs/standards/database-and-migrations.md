@@ -1,6 +1,6 @@
 # Database & Migration Standards (SQLite)
 
-Persistence is local SQLite via `rusqlite` (bundled), owned by `src/storage/` (`MessageStore`, `threads`, `messages`, `importer`, `sync_ingest`, `thread_cache`). There is no server database and `src/protocol/` never imports `rusqlite`.
+Persistence is local SQLite via `rusqlite` (bundled), owned by `crates/alolite-core/src/storage/` (`MessageStore`, `threads`, `messages`, `importer`, `sync_ingest`, `thread_cache`). There is no server database and `crates/alolite-core/src/protocol/` never imports `rusqlite`.
 
 ---
 
@@ -83,14 +83,14 @@ migrate path: N -> N+1 -> ... -> target
 
 Rules:
 
-| Rule                 | Detail                                                                                                   |
-| :------------------- | :------------------------------------------------------------------------------------------------------- |
-| Single source        | Migration list lives in `src/storage/` (`mod.rs` / `models.rs`); no ad-hoc `CREATE TABLE` at call sites. |
-| Idempotent bootstrap | Fresh DB runs every migration from 0; existing DB runs only missing steps.                               |
-| Forward-only         | No down-migrations; ship a compensating migration instead.                                               |
-| Atomic step          | Each step runs in a transaction and bumps `user_version` in the same transaction.                        |
-| Startup safety       | Migration failure aborts startup with a clear error; never run on a corrupted/unknown newer version.     |
-| Backup               | Before a destructive migration, copy the DB file to `<name>.bak-<user_version>` when feasible.           |
+| Rule                 | Detail                                                                                                                       |
+| :------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| Single source        | Migration list lives in `crates/alolite-core/src/storage/` (`mod.rs` / `models.rs`); no ad-hoc `CREATE TABLE` at call sites. |
+| Idempotent bootstrap | Fresh DB runs every migration from 0; existing DB runs only missing steps.                                                   |
+| Forward-only         | No down-migrations; ship a compensating migration instead.                                                                   |
+| Atomic step          | Each step runs in a transaction and bumps `user_version` in the same transaction.                                            |
+| Startup safety       | Migration failure aborts startup with a clear error; never run on a corrupted/unknown newer version.                         |
+| Backup               | Before a destructive migration, copy the DB file to `<name>.bak-<user_version>` when feasible.                               |
 
 ### Expand & Contract (SQLite adaptation)
 

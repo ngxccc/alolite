@@ -23,7 +23,7 @@ This document establishes the mandatory intellectual property and legal complian
 ### 1.3 Trademark & Naming Discipline
 
 - **Public Surface:** Use the brand display name **AloLite** exclusively for user-facing surfaces (UI window titles, notifications, desktop entry names, documentation). Technical identifiers (binary names, packages, data directories) strictly use lowercase **alolite** or **alolite-desktop**. Do not use trademarked third-party names.
-- **Internal Structure:** Keep protocol logic organized under neutral technical namespaces (`src/protocol/`).
+- **Internal Structure:** Keep protocol logic organized under neutral technical namespaces (`crates/alolite-core/src/protocol/`).
 - **Nominative Fair Use:** References to the target service are permitted only in technical comments and interoperability notes where necessary to describe protocol compatibility.
 
 ### 1.4 Secret & Session Isolation

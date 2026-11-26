@@ -62,17 +62,41 @@ Operating guide for AI agents and humans working in this repository.
 - **Wire protocol docs live in `re-notes/`.** HTTP `commandId` catalog, wire envelopes, and WebSocket `cmd` registry → `re-notes/14-http-rest-endpoint-catalog.md`; directory index → `re-notes/README.md`. Do not duplicate upstream schema under `docs/`.
 - **UI Icon Standard:** Always use embedded SVG/PNG icons (`lucide-react` vector icons and embedded PNG reaction/logo assets). NEVER use raw keyboard emojis (`⚠️`, `✅`, `❌`) in UI code.
 
+## Issue Tracking
+
+Issues and specifications live in **GitHub Issues** (`ngxccc/alolite`). Use the `gh` CLI. See `docs/standards/issue-tracker.md` and `.github/PULL_REQUEST_TEMPLATE.md`.
+
+Every issue is atomic: one outcome, one boundary, one transaction or contract. Deferred bundles carry `needs-split` and are listed only in the split tracking issue. Query the register before planning or starting work on a bundle:
+
+```bash
+gh issue list --state open --label needs-split --limit 100 \
+  --json number,title --jq '.[] | "#\(.number) \(.title)"'
+```
+
 ## Engineering Standards
 
-MUST read the corresponding standard file under `docs/standards/` before modifying related code or tests:
+`docs/standards/` is the single source of truth, and reading the matching file is a gate before the first edit — not a suggestion. Do not reconstruct a rule from memory or from another repository.
 
-- **Issue tracking & tickets** → `docs/standards/issue-tracker.md`
-- **Domain glossary & ADRs** → `docs/standards/domain-docs.md`
-- **Comments & docstrings** → `docs/standards/code-comment-taxonomy.md`
-- **API calls, IPC, and error handling** → `docs/standards/api-design-and-error-handling.md`
-- **SQLite schema and migrations** → `docs/standards/database-and-migrations.md`
-- **Threads, channels, locks, and races** → `docs/standards/concurrency-and-locking.md`
-- **Tests, fixtures, and benchmarks** → `docs/standards/testing-and-fixtures.md`
-- **Secrets, crypto, and session handling** → `docs/standards/security-and-cryptography.md`
-- **Branches, commits, and PRs** → `docs/standards/git-flow-and-pr-matrix.md`
-- **Compliance, IP, and Clean-Room** → `docs/standards/compliance-and-ip.md`
+| Change you are about to make               | Read first                                        |
+| :----------------------------------------- | :------------------------------------------------ |
+| An HTTP call, IPC command, or error shape  | `docs/standards/api-design-and-error-handling.md` |
+| A UI page, component, token, or store      | `docs/standards/ui-and-frontend.md`               |
+| A SQLite schema, query, or migration       | `docs/standards/database-and-migrations.md`       |
+| A lock, channel, task, or retry            | `docs/standards/concurrency-and-locking.md`       |
+| Secrets, crypto, or session handling       | `docs/standards/security-and-cryptography.md`     |
+| A test, fixture, or benchmark              | `docs/standards/testing-and-fixtures.md`          |
+| A comment or docstring                     | `docs/standards/code-comment-taxonomy.md`         |
+| A branch, commit, or pull request          | `docs/standards/git-flow-and-pr-matrix.md`        |
+| An issue, spec, or scope decision          | `docs/standards/issue-tracker.md`                 |
+| A glossary term, domain model, or ADR      | `docs/standards/domain-docs.md`                   |
+| A workflow, release, or packaging rule     | `docs/standards/ci-and-release.md`                |
+| Reviewing a branch, diff, or PR            | `docs/standards/code-review.md`                   |
+| Clean-room RE, IP, or licensing boundaries | `docs/standards/compliance-and-ip.md`             |
+
+Protocol for every implementation task:
+
+1. Map the planned edits to the table and read every matching file before writing code, tests, docs, or commit messages.
+2. Open the response that accompanies the first edit with one line naming the read set, for example `Standards read: api-design-and-error-handling.md, testing-and-fixtures.md`.
+3. When the diff grows into another area, read that area's standard before continuing instead of at the end.
+4. When the mapping is unclear, read every file in `docs/standards/` plus `GLOSSARY.md` rather than guessing.
+5. When code and a standard disagree, surface the conflict before changing either one.
