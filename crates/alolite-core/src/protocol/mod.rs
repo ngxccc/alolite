@@ -1,6 +1,7 @@
 //! Zalo protocol implementation: crypto, session, auth, messaging, and websocket transport.
 
 pub mod auth;
+pub mod call;
 pub mod client;
 pub mod crypto;
 pub mod endpoints;
