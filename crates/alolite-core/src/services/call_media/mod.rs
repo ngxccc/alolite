@@ -11,6 +11,7 @@ pub mod audio_backend;
 pub mod leveler;
 pub mod neteq;
 pub mod opus_codec;
+pub mod wav_dump;
 
 /// Audio sample rate negotiated for ZRTC 1-1 calls (16 kHz wideband).
 pub const SAMPLE_RATE_HZ: u32 = 16_000;
