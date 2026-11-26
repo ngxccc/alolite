@@ -11,6 +11,7 @@ import {
   bootstrapStores,
   dispatchCoreEvent,
   useAuthStore,
+  useCallStore,
   useChatStore,
   useContactsStore,
   useMediaCacheStore,
@@ -297,9 +298,27 @@ describe("coreEventRouter + feature domain invariants", () => {
     expect(useChatStore.getState().threads[0]?.messages).toHaveLength(0);
   });
 
-  it("resets chat, contacts, and media cache on LoggedOut to isolate accounts", () => {
+  it("resets chat, contacts, call, and media cache on LoggedOut to isolate accounts", () => {
     useMediaCacheStore.getState().putMedia("img_1", "data:image/png;base64,abc");
     useContactsStore.getState().setFriendStatus("u_1", "Friend");
+    dispatchCoreEvent({
+      type: "CallStateChanged",
+      payload: {
+        phase: "incoming_ringing",
+        call_id: 9001,
+        peer_id: "u_1",
+        peer_name: "Alice",
+        peer_avatar: null,
+        is_incoming: true,
+        is_muted: false,
+        is_held: false,
+        started_at_ms: null,
+        end_reason: null,
+      },
+    });
+    expect(useCallStore.getState().phase).toBe("incoming_ringing");
+    expect(useCallStore.getState().callId).toBe(9001);
+
     dispatchCoreEvent({ type: "LoggedOut" });
 
     expect(useAuthStore.getState().loggedIn).toBe(false);
@@ -307,6 +326,8 @@ describe("coreEventRouter + feature domain invariants", () => {
     expect(useChatStore.getState().selectedThreadId).toBeNull();
     expect(useContactsStore.getState().friendStatusByUid).toEqual({});
     expect(useMediaCacheStore.getState().mediaCache).toEqual({});
+    expect(useCallStore.getState().phase).toBe("idle");
+    expect(useCallStore.getState().callId).toBeNull();
   });
 
   it("refuses ambiguous quote-jump text references just like Rust unique_reference_index", () => {

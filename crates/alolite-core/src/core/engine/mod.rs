@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -17,11 +18,14 @@ use crate::storage::{db_path_for_account, MessageStore};
 
 mod auth;
 mod background;
+pub mod call;
 mod maintenance;
 mod media;
 mod messaging;
 mod social;
 mod threads;
+
+pub use call::{CallManager, CallSnapshot};
 
 #[cfg(test)]
 mod tests;
@@ -55,6 +59,8 @@ pub struct CoreEngine {
     /// minting a second session that invalidates the first.
     pub(super) login_in_flight: Arc<AtomicBool>,
     pub(super) current_qr_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Coordinates the single 1-1 ZRTC call outside `CoreEngine::session` mutex (`INV-9`).
+    pub(super) call_manager: Arc<CallManager>,
 }
 
 impl CoreEngine {
@@ -72,6 +78,7 @@ impl CoreEngine {
             session_verified: Arc::new(AtomicBool::new(false)),
             login_in_flight: Arc::new(AtomicBool::new(false)),
             current_qr_task: Mutex::new(None),
+            call_manager: Arc::new(CallManager::new()),
         })
     }
 
@@ -80,6 +87,25 @@ impl CoreEngine {
         session: Session,
         db_path: impl Into<String>,
         sink: Arc<dyn CoreEventSink>,
+    ) -> Arc<Self> {
+        Self::with_call_timeouts(
+            session,
+            db_path,
+            sink,
+            call::DEFAULT_RING_TIMEOUT,
+            call::DEFAULT_MEDIA_WATCHDOG_TIMEOUT,
+            call::DEFAULT_ECHO_PROBE_TIMEOUT,
+        )
+    }
+
+    /// Create an engine pinned to an explicit SQLite file path and custom call timeouts (for tests).
+    pub fn with_call_timeouts(
+        session: Session,
+        db_path: impl Into<String>,
+        sink: Arc<dyn CoreEventSink>,
+        ring_timeout: Duration,
+        media_watchdog_timeout: Duration,
+        echo_probe_timeout: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
             session: Arc::new(Mutex::new(session)),
@@ -93,6 +119,11 @@ impl CoreEngine {
             session_verified: Arc::new(AtomicBool::new(false)),
             login_in_flight: Arc::new(AtomicBool::new(false)),
             current_qr_task: Mutex::new(None),
+            call_manager: Arc::new(CallManager::with_timeouts(
+                ring_timeout,
+                media_watchdog_timeout,
+                echo_probe_timeout,
+            )),
         })
     }
 

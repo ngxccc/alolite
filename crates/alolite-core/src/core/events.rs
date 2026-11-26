@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::protocol::auth::login::CaptchaChallenge;
 use crate::protocol::auth::QrLogin;
 use crate::protocol::messaging::unread::MuteControlEvent;
@@ -44,6 +46,12 @@ impl CoreImageData {
 /// Sink notified whenever [`super::CoreEngine`] produces a domain event for an active UI frontend.
 pub trait CoreEventSink: Send + Sync + 'static {
     fn emit(&self, event: CoreEvent);
+
+    /// Returns `true` for headless hosts (`--mcp` / `--api-only`) that must never
+    /// auto-answer calls or open local audio devices (`EDGE-5`).
+    fn is_headless(&self) -> bool {
+        false
+    }
 }
 
 /// Default no-op sink used in headless `--mcp` / `--api-only` mode.
@@ -51,6 +59,22 @@ pub struct NoopEventSink;
 
 impl CoreEventSink for NoopEventSink {
     fn emit(&self, _event: CoreEvent) {}
+
+    fn is_headless(&self) -> bool {
+        true
+    }
+}
+
+/// UI-facing lifecycle phase of the single active 1-1 ZRTC audio call (`INV-7`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CallPhase {
+    Idle,
+    OutgoingRinging,
+    IncomingRinging,
+    Connecting,
+    Active,
+    Ending,
 }
 
 /// Domain events emitted by [`super::CoreEngine`].
@@ -205,5 +229,17 @@ pub enum CoreEvent {
         name: String,
         avatar: Option<String>,
         threads: Vec<Thread>,
+    },
+    CallStateChanged {
+        phase: CallPhase,
+        call_id: Option<u32>,
+        peer_id: Option<String>,
+        peer_name: Option<String>,
+        peer_avatar: Option<String>,
+        is_incoming: bool,
+        is_muted: bool,
+        is_held: bool,
+        started_at_ms: Option<i64>,
+        end_reason: Option<String>,
     },
 }

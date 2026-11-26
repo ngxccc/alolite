@@ -1,9 +1,16 @@
-import { PanelRight, Star, Users } from "lucide-react";
+import { PanelRight, Phone, Star, Users } from "lucide-react";
+import { ipc } from "@/shared/api/ipc";
 import type { Thread } from "@/shared/types/ipc.generated";
 import { UserAvatar } from "@/shared/ui/user-avatar";
 import { Button } from "@/shared/ui/button";
 import { cn } from "cn";
-import { useChatStore, useContactsStore, useMediaCacheStore, useUIStore } from "@/stores";
+import {
+  useCallStore,
+  useChatStore,
+  useContactsStore,
+  useMediaCacheStore,
+  useUIStore,
+} from "@/stores";
 import { InChatSearch } from "./in-chat-search";
 
 interface ChatHeaderProps {
@@ -22,6 +29,9 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
   const toggleFilterStarredOnly = useChatStore((s) => s.toggleFilterStarredOnly);
   const infoDrawerOpen = useChatStore((s) => s.infoDrawerOpen);
   const toggleInfoDrawer = useChatStore((s) => s.toggleInfoDrawer);
+  const callPhase = useCallStore((s) => s.phase);
+  const showToast = useUIStore((s) => s.showToast);
+  const canAudioCall = !thread.is_group && !thread.name.includes("Cloud của tôi");
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-5">
@@ -67,6 +77,25 @@ export function ChatHeader({ thread }: ChatHeaderProps) {
 
       {/* Right-side icon buttons — 32px each */}
       <div className="flex shrink-0 items-center gap-1">
+        {canAudioCall ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            title="Gọi thoại"
+            aria-label="Gọi thoại"
+            disabled={callPhase !== "idle"}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              void ipc.startCall(thread.id, thread.name, thread.avatar).catch((err) => {
+                showToast(`Không thể bắt đầu cuộc gọi: ${String(err)}`, "error");
+              });
+            }}
+          >
+            <Phone className="h-4.5 w-4.5" aria-hidden="true" />
+          </Button>
+        ) : null}
+
         <InChatSearch
           isOpen={inChatSearchOpen}
           query={inChatSearchQuery}

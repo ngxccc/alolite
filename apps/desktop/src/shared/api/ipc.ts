@@ -157,6 +157,16 @@ export const ipc = {
   getDevDiagnostics: () => call<DevDiagnosticsSnapshot>("get_dev_diagnostics"),
   openPathInOs: (path: string) => call<void>("open_path_in_os", { path }),
   spawnMultiProfile: (profile: string) => call<void>("spawn_multi_profile", { profile }),
+  startCall: (peerId: string, peerName?: string | null, peerAvatar?: string | null) =>
+    call<void>("start_call", {
+      peerId,
+      peerName: peerName ?? null,
+      peerAvatar: peerAvatar ?? null,
+    }),
+  answerCall: (accept: boolean) => call<void>("answer_call", { accept }),
+  endCall: () => call<void>("end_call"),
+  setCallMuted: (muted: boolean) => call<void>("set_call_muted", { muted }),
+  setCallHeld: (held: boolean) => call<void>("set_call_held", { held }),
 
   async openExternalUrl(url: string): Promise<void> {
     if (isTauriRuntime()) {

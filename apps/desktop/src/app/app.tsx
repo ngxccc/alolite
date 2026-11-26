@@ -14,6 +14,8 @@ import { PhoneSyncModal } from "@/features/sync/components/phone-sync-modal";
 import { SettingsModal } from "@/features/settings/components/settings-modal";
 import { WipeConfirmModal } from "@/features/settings/components/wipe-confirm-modal";
 import { DevToolsModal } from "@/features/devtools/components/dev-tools-modal";
+import { ActiveCallBar } from "@/features/call/components/active-call-bar";
+import { IncomingCallModal } from "@/features/call/components/incoming-call-modal";
 import {
   bootstrapStores,
   dispatchCoreEvent,
@@ -149,6 +151,8 @@ export function App() {
       <ForwardModal />
       <WipeConfirmModal />
       <DevToolsModal />
+      <ActiveCallBar />
+      <IncomingCallModal />
       <ImageViewerModal
         viewer={imageViewer}
         mediaCache={mediaCache}
