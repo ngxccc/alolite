@@ -3,12 +3,20 @@
 
 use super::entity::Thread;
 
-/// Return `true` if a thread name is empty or a generic placeholder (`"Người dùng ..."`, `"Nhóm ..."`).
+fn is_placeholder_id_suffix(rest: &str) -> bool {
+    let clean = rest.trim();
+    let digits = clean.strip_prefix('g').unwrap_or(clean);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Return `true` if a thread name is empty or a generic placeholder (`"Người dùng <id>"`, `"Nhóm <id>"`).
 pub fn is_generic_thread_name(name: &str) -> bool {
     let t = name.trim();
     t.is_empty()
-        || t.starts_with("Người dùng ")
-        || t.starts_with("Nhóm ")
+        || t.strip_prefix("Người dùng ")
+            .is_some_and(is_placeholder_id_suffix)
+        || t.strip_prefix("Nhóm ")
+            .is_some_and(is_placeholder_id_suffix)
         || t.chars().all(|c| c.is_ascii_digit())
 }
 
