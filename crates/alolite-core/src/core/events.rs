@@ -243,6 +243,7 @@ pub enum CoreEvent {
         is_incoming: bool,
         is_muted: bool,
         is_held: bool,
+        peer_muted: bool,
         started_at_ms: Option<i64>,
         end_reason: Option<String>,
     },

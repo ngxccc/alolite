@@ -311,6 +311,8 @@ pub struct CallSignalWireData {
     pub is_on_cam: Option<Value>,
     #[serde(rename = "isOnMic")]
     pub is_on_mic: Option<Value>,
+    #[serde(rename = "type")]
+    pub conf_type: Option<Value>,
 }
 
 impl fmt::Debug for CallSignalWireData {
@@ -429,6 +431,25 @@ impl CallSignalWireData {
             "onoff_camera" | "mute_audio" | "share_screen" => CallSignalCode::Conf,
             _ => return None,
         })
+    }
+
+    /// Extract remote peer mic mute state (`Some(true)` = muted, `Some(false)` = unmuted)
+    /// from incoming `mute_audio` (`params.type`/`status`) or `12006` (`isOnMic`) frames.
+    pub fn peer_muted_update(&self) -> Option<bool> {
+        if self.signal_code() != Some(CallSignalCode::Conf) {
+            return None;
+        }
+        let act = wire::field_str(self.act.as_ref());
+        if let Some(ref a) = act {
+            if a != "mute_audio" {
+                return None;
+            }
+            let raw = wire::val_u64(self.conf_type.as_ref())
+                .or_else(|| wire::val_u64(self.status.as_ref()))?;
+            return Some(raw == 1);
+        }
+        let raw = wire::val_u64(self.is_on_mic.as_ref())?;
+        (raw == 0 || raw == 1).then_some(raw == 1)
     }
 
     /// Return the numeric `callId`.

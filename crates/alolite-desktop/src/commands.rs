@@ -668,3 +668,22 @@ pub fn set_call_audio_config(
         .set_call_audio_config(auto_mic, auto_speaker, mic_pct, speaker_pct);
     Ok(())
 }
+
+#[tauri::command]
+pub fn start_call_mic_test(
+    state: State<'_, AppCoreState>,
+    mic_id: Option<String>,
+    auto_mic: bool,
+    mic_pct: u8,
+) -> Result<(), String> {
+    state
+        .engine
+        .start_call_mic_test(mic_id, auto_mic, mic_pct)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn stop_call_mic_test(state: State<'_, AppCoreState>) -> Result<(), String> {
+    state.engine.stop_call_mic_test();
+    Ok(())
+}

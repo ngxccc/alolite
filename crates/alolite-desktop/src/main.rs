@@ -140,6 +140,8 @@ async fn main() -> anyhow::Result<()> {
             commands::set_call_devices,
             commands::set_call_volume,
             commands::set_call_audio_config,
+            commands::start_call_mic_test,
+            commands::stop_call_mic_test,
         ])
         .run(tauri::generate_context!())
         .map_err(|e| anyhow::anyhow!("Không thể khởi chạy AloLite Tauri: {e}"))?;
