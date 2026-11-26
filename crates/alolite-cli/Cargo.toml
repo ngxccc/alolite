@@ -8,6 +8,10 @@ repository.workspace = true
 license-file.workspace = true
 description = "Headless CLI, MCP stdio/HTTP server, and desktop launcher for AloLite"
 
+[features]
+default = []
+call = ["alolite-core/call"]
+
 [[bin]]
 name = "alolite"
 path = "src/main.rs"

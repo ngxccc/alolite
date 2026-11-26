@@ -10,6 +10,7 @@ description = "AloLite Desktop UI Host (Tauri v2 + TypeScript)"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+call = ["alolite-core/call"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

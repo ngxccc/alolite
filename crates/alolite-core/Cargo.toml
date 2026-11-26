@@ -8,6 +8,13 @@ repository.workspace = true
 license-file.workspace = true
 description = "UI-independent Zalo protocol, CoreEngine, SQLite store, and MCP runtime"
 
+[features]
+default = []
+call = ["dep:pkg-config"]
+
+[build-dependencies]
+pkg-config = { version = "0.3", optional = true }
+
 [dependencies]
 # Cryptography & Network Encoding
 aes = "0.9"
