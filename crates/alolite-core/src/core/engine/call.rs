@@ -60,6 +60,7 @@ pub struct CallSnapshot {
     pub is_incoming: bool,
     pub is_muted: bool,
     pub is_held: bool,
+    pub peer_muted: bool,
     pub started_at_ms: Option<i64>,
     pub end_reason: Option<String>,
 }
@@ -100,6 +101,9 @@ struct CallManagerState {
     audio_threads: Vec<std::thread::JoinHandle<()>>,
     selected_mic_id: Option<String>,
     selected_speaker_id: Option<String>,
+    peer_muted: bool,
+    mic_test_stop: Option<Arc<AtomicBool>>,
+    mic_test_thread: Option<std::thread::JoinHandle<()>>,
     audio_device_opened_count: usize,
     ended_call_ids: std::collections::VecDeque<(u32, Instant)>,
 }
@@ -360,6 +364,7 @@ fn snapshot_from_state(g: &CallManagerState, end_reason: Option<CallEndReason>) 
         is_incoming: g.session.direction() == Some(CallDirection::Incoming),
         is_muted: g.session.is_muted(),
         is_held: g.session.is_held(),
+        peer_muted: g.peer_muted,
         started_at_ms: g.started_at_ms,
         end_reason: end_reason.map(end_reason_label),
     }
@@ -578,6 +583,7 @@ impl CoreEngine {
                 speaker_id: norm_spk,
             });
         }
+        self.persist_call_audio_settings();
         Ok(())
     }
 
@@ -606,6 +612,183 @@ impl CoreEngine {
             .auto_speaker_agc
             .store(auto_speaker, Ordering::Relaxed);
         self.set_call_volume(mic_pct, speaker_pct);
+        self.persist_call_audio_settings();
+    }
+
+    /// Synchronize persistent [`super::settings::AppSettings`] into runtime `CallManager` state.
+    pub fn apply_call_audio_settings(&self, settings: &crate::core::settings::AppSettings) {
+        let norm_mic = normalize_device_id(Some(settings.selected_mic_device.as_str()))
+            .map(ToString::to_string);
+        let norm_spk = normalize_device_id(Some(settings.selected_speaker_device.as_str()))
+            .map(ToString::to_string);
+        let mic_pct = u8::try_from(settings.mic_gain_percent.min(150)).unwrap_or(100);
+        let spk_pct = u8::try_from(settings.speaker_gain_percent.min(150)).unwrap_or(100);
+
+        self.call_manager
+            .auto_mic_agc
+            .store(settings.auto_mic_agc, Ordering::Relaxed);
+        self.call_manager
+            .auto_speaker_agc
+            .store(settings.auto_speaker_agc, Ordering::Relaxed);
+        self.set_call_volume(mic_pct, spk_pct);
+
+        let tx = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let changed = g.selected_mic_id != norm_mic || g.selected_speaker_id != norm_spk;
+            g.selected_mic_id = norm_mic.clone();
+            g.selected_speaker_id = norm_spk.clone();
+            changed.then(|| g.media_cmd_tx.clone()).flatten()
+        };
+        if let Some(tx) = tx {
+            let _ = tx.send(MediaLoopCmd::SetDevices {
+                mic_id: norm_mic,
+                speaker_id: norm_spk,
+            });
+        }
+    }
+
+    fn persist_call_audio_settings(&self) {
+        if self.sink.is_headless() || self.call_manager.force_null_audio {
+            return;
+        }
+        let (mic_id, spk_id) = self.call_manager.selected_devices();
+        let mut settings = crate::core::settings::AppSettings::load();
+        settings.selected_mic_device = mic_id.unwrap_or_default();
+        settings.selected_speaker_device = spk_id.unwrap_or_default();
+        settings.auto_mic_agc = self.call_manager.auto_mic_agc.load(Ordering::Relaxed);
+        settings.auto_speaker_agc = self.call_manager.auto_speaker_agc.load(Ordering::Relaxed);
+        settings.mic_gain_percent =
+            u32::from(self.call_manager.mic_volume_pct.load(Ordering::Relaxed));
+        settings.speaker_gain_percent =
+            u32::from(self.call_manager.speaker_volume_pct.load(Ordering::Relaxed));
+        settings.save();
+    }
+
+    /// Start a pre-call local microphone test that emits [`CoreEvent::CallAudioLevels`]
+    /// every 100 ms while `CallPhase::Idle`.
+    ///
+    /// # Errors
+    /// Returns an error if a call is currently active.
+    pub fn start_call_mic_test(
+        self: &Arc<Self>,
+        mic_id: Option<String>,
+        auto_mic: bool,
+        mic_pct: u8,
+    ) -> Result<()> {
+        self.stop_call_mic_test();
+        let norm_mic = normalize_device_id(mic_id.as_deref()).map(ToString::to_string);
+        {
+            let g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if g.session.state() != CallState::Idle {
+                anyhow::bail!("Không thể thử micro khi đang có cuộc gọi");
+            }
+        }
+        self.call_manager
+            .auto_mic_agc
+            .store(auto_mic, Ordering::Relaxed);
+        self.call_manager
+            .mic_volume_pct
+            .store(mic_pct.min(150), Ordering::Relaxed);
+
+        #[cfg(all(feature = "call", target_os = "linux"))]
+        if !self.sink.is_headless() && !self.call_manager.force_null_audio {
+            use crate::services::call_media::{
+                Apm, AudioLeveler, LevelerConfig, PulseCapture, CHANNELS, SAMPLE_RATE_HZ,
+            };
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            let stop_worker = Arc::clone(&stop_flag);
+            let engine = Arc::clone(self);
+            let auto_flag = Arc::clone(&self.call_manager.auto_mic_agc);
+            let vol_pct = Arc::clone(&self.call_manager.mic_volume_pct);
+            let handle = std::thread::Builder::new()
+                .name("alolite-mic-test".to_string())
+                .spawn(move || {
+                    let mut cap = match PulseCapture::open(norm_mic.as_deref()) {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+                    let apm =
+                        Apm::new(SAMPLE_RATE_HZ as i32, CHANNELS as i32, false, true, true).ok();
+                    let mut leveler = AudioLeveler::new(LevelerConfig::mic(), None);
+                    let mut buf = [0i16; FRAME_SAMPLES];
+                    let mut last_emit = std::time::Instant::now();
+                    while !stop_worker.load(Ordering::Relaxed) {
+                        if cap.read_frame(&mut buf).is_err() {
+                            std::thread::sleep(Duration::from_millis(20));
+                            continue;
+                        }
+                        if let Some(ref a) = apm {
+                            a.process_capture(&mut buf);
+                        }
+                        let gain_pct = if auto_flag.load(Ordering::Relaxed) {
+                            leveler.process(&mut buf);
+                            leveler.gain_pct()
+                        } else {
+                            let pct = vol_pct.load(Ordering::Relaxed);
+                            scale_pcm_pct(&mut buf, pct);
+                            pct
+                        };
+                        if last_emit.elapsed() >= Duration::from_millis(100) {
+                            last_emit = std::time::Instant::now();
+                            engine.emit(CoreEvent::CallAudioLevels {
+                                mic_level: pcm_level_pct(&buf),
+                                speaker_level: 0,
+                                mic_gain_pct: gain_pct,
+                                speaker_gain_pct: engine
+                                    .call_manager
+                                    .live_spk_gain_pct
+                                    .load(Ordering::Relaxed),
+                            });
+                        }
+                    }
+                })
+                .ok();
+            if let Some(jh) = handle {
+                let mut g = self
+                    .call_manager
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                g.mic_test_stop = Some(stop_flag);
+                g.mic_test_thread = Some(jh);
+            }
+        }
+        #[cfg(not(all(feature = "call", target_os = "linux")))]
+        let _ = norm_mic;
+
+        Ok(())
+    }
+
+    /// Stop any active pre-call microphone test and reset the live mic meter to 0.
+    pub fn stop_call_mic_test(&self) {
+        let (stop, thread) = {
+            let mut g = self
+                .call_manager
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            (g.mic_test_stop.take(), g.mic_test_thread.take())
+        };
+        if let Some(flag) = stop {
+            flag.store(true, Ordering::Relaxed);
+        }
+        if let Some(jh) = thread {
+            let _ = jh.join();
+        }
+        self.emit(CoreEvent::CallAudioLevels {
+            mic_level: 0,
+            speaker_level: 0,
+            mic_gain_pct: self.call_manager.live_mic_gain_pct.load(Ordering::Relaxed),
+            speaker_gain_pct: self.call_manager.live_spk_gain_pct.load(Ordering::Relaxed),
+        });
     }
 
     /// Dispatch a parsed VoIP signaling event (`401..409`) from WS `604` or `601..603`.
@@ -798,6 +981,27 @@ impl CoreEngine {
                 }
                 return;
             }
+            CallSignalCode::Conf => {
+                if let Some(peer_muted) = signal.peer_muted_update() {
+                    let changed = {
+                        let mut g = self
+                            .call_manager
+                            .state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if g.session.call_id() == Some(call_id) && g.peer_muted != peer_muted {
+                            g.peer_muted = peer_muted;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if changed {
+                        self.emit_call_snapshot(None);
+                    }
+                }
+                return;
+            }
             _ => return,
         };
 
@@ -841,6 +1045,7 @@ impl CoreEngine {
             is_incoming: snap.is_incoming,
             is_muted: snap.is_muted,
             is_held: snap.is_held,
+            peer_muted: snap.peer_muted,
             started_at_ms: snap.started_at_ms,
             end_reason: snap.end_reason,
         });
@@ -915,6 +1120,7 @@ impl CoreEngine {
                     });
                 }
                 CallEffect::StartZrtpAndMedia => {
+                    self.stop_call_mic_test();
                     self.start_media_loop(s_snap);
                 }
                 CallEffect::StopZrtpAndMedia { send_end_call_pkt } => {
@@ -988,6 +1194,7 @@ impl CoreEngine {
                     .apply(CallEvent::TeardownComplete)
                     .unwrap_or_default();
                 g.remember_ended_call(cid);
+                g.peer_muted = false;
                 g.peer_name = None;
                 g.peer_avatar = None;
                 g.local_media_uid = None;
@@ -3458,5 +3665,57 @@ mod tests {
             .handle_voip_signal(&s_snap, test_signal(401, 8001, "peer-multi-1"))
             .await;
         assert_eq!(engine.call_snapshot().phase, CallPhase::Idle);
+    }
+
+    #[tokio::test]
+    async fn conf_mute_audio_updates_peer_muted_and_settings_sync_devices() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::new(CollectSink(Arc::clone(&events)));
+        let session = Session::new(false, false, false).unwrap();
+        let engine = CoreEngine::with_call_timeouts(
+            session,
+            ":memory:",
+            sink,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+            Duration::from_millis(500),
+        );
+        let mut settings = crate::core::settings::AppSettings::default();
+        settings.selected_mic_device = "mic-1".to_string();
+        settings.selected_speaker_device = "spk-2".to_string();
+        settings.auto_mic_agc = false;
+        settings.mic_gain_percent = 75;
+        engine.apply_call_audio_settings(&settings);
+        assert_eq!(
+            engine.call_manager.selected_devices(),
+            (Some("mic-1".to_string()), Some("spk-2".to_string()))
+        );
+        assert!(!engine.call_manager.auto_mic_agc.load(Ordering::Relaxed));
+        assert_eq!(
+            engine.call_manager.mic_volume_pct.load(Ordering::Relaxed),
+            75
+        );
+
+        let s_snap = engine.session_arc().lock().await.clone();
+        engine
+            .handle_voip_signal(&s_snap, test_signal(401, 8100, "peer-mute-1"))
+            .await;
+        let conf_mute = CallSignalWireData::from_value(&serde_json::json!({
+            "cmd": 604,
+            "act": "mute_audio",
+            "callId": 8100,
+            "params": { "type": 1 }
+        }));
+        engine.handle_voip_signal(&s_snap, conf_mute).await;
+        assert!(engine.call_snapshot().peer_muted);
+
+        let conf_unmute = CallSignalWireData::from_value(&serde_json::json!({
+            "cmd": 604,
+            "act": "mute_audio",
+            "callId": 8100,
+            "params": { "type": 0 }
+        }));
+        engine.handle_voip_signal(&s_snap, conf_unmute).await;
+        assert!(!engine.call_snapshot().peer_muted);
     }
 }

@@ -91,6 +91,7 @@ impl CoreEngine {
     ) -> CoreBootstrapSnapshot {
         let settings = AppSettings::load();
         settings.apply_privacy_blockers();
+        self.apply_call_audio_settings(&settings);
 
         let (logged_in, uin, display_name, avatar, send2me_id) = {
             let s = self.session.lock().await;
@@ -205,6 +206,7 @@ impl CoreEngine {
     /// Save UI settings, synchronize runtime privacy blockers, and return the persisted copy.
     pub fn save_settings(&self, settings: AppSettings) -> AppSettings {
         settings.apply_privacy_blockers();
+        self.apply_call_audio_settings(&settings);
         settings.save();
         settings
     }

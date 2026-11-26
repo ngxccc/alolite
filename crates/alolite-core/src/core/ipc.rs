@@ -326,6 +326,7 @@ pub enum CoreEventDto {
         is_incoming: bool,
         is_muted: bool,
         is_held: bool,
+        peer_muted: bool,
         started_at_ms: Option<i64>,
         end_reason: Option<String>,
     },
@@ -601,6 +602,7 @@ impl From<CoreEvent> for CoreEventDto {
                 is_incoming,
                 is_muted,
                 is_held,
+                peer_muted,
                 started_at_ms,
                 end_reason,
             } => Self::CallStateChanged {
@@ -612,6 +614,7 @@ impl From<CoreEvent> for CoreEventDto {
                 is_incoming,
                 is_muted,
                 is_held,
+                peer_muted,
                 started_at_ms,
                 end_reason,
             },
