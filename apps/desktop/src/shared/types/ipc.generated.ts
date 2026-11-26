@@ -352,6 +352,11 @@ export type CoreEventDto = { type: "NotificationAuthorization"; payload: {
 	is_held: boolean,
 	started_at_ms: number | null,
 	end_reason: string | null,
+} } | { type: "CallAudioLevels"; payload: {
+	mic_level: number,
+	speaker_level: number,
+	mic_gain_pct: number,
+	speaker_gain_pct: number,
 } };
 
 /**  Outbound message transmission lifecycle state. */

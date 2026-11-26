@@ -407,5 +407,8 @@ export function dispatchCoreEvent(event: CoreEventDto): void {
     case "CallStateChanged":
       useCallStore.getState().applyCallState(event.payload);
       return;
+    case "CallAudioLevels":
+      useCallStore.getState().applyAudioLevels(event.payload);
+      return;
   }
 }

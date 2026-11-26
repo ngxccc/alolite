@@ -30,10 +30,10 @@ describe("call store and active call bar helpers", () => {
     expect(useCallStore.getState().selectedSpeakerId).toBe("spk-2");
   });
 
-  test("getCallStatusText shows hold status in Vietnamese when held", () => {
+  test("getCallStatusText shows call status in Vietnamese", () => {
     expect(formatCallDuration(65)).toBe("01:05");
-    expect(getCallStatusText("active", 65, false)).toBe("01:05");
-    expect(getCallStatusText("active", 65, true)).toBe("Đang tạm giữ");
+    expect(getCallStatusText("active", 65, false)).toBe("Đang trò chuyện · 01:05");
+    expect(getCallStatusText("active", 65, true)).toBe("Mic đang tắt · 01:05");
     expect(getCallStatusText("outgoing_ringing", 0, false)).toBe("Đang đổ chuông…");
     expect(getCallStatusText("connecting", 0, false)).toBe("Đang kết nối…");
     expect(getCallStatusText("ending", 0, false)).toBe("Đang kết thúc…");

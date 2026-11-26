@@ -171,6 +171,20 @@ export const ipc = {
   listAudioDevices: () => call<AudioDeviceList>("list_audio_devices"),
   setCallDevices: (micId: string | null, speakerId: string | null) =>
     call<void>("set_call_devices", { micId, speakerId }),
+  setCallVolume: (micPct: number, speakerPct: number) =>
+    call<void>("set_call_volume", { micPct, speakerPct }),
+  setCallAudioConfig: (
+    autoMic: boolean,
+    autoSpeaker: boolean,
+    micPct: number,
+    speakerPct: number,
+  ) =>
+    call<void>("set_call_audio_config", {
+      autoMic,
+      autoSpeaker,
+      micPct,
+      speakerPct,
+    }),
 
   async openExternalUrl(url: string): Promise<void> {
     if (isTauriRuntime()) {
