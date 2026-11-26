@@ -1417,6 +1417,7 @@ impl CoreEngine {
                     g.audio_device_opened_count += 1;
                 }
                 spawn_audio_threads(
+                    call_id,
                     Arc::clone(&muted_flag),
                     Arc::clone(&held_flag),
                     Arc::clone(&stop_audio_for_loop),
@@ -2113,6 +2114,7 @@ fn pcm_level_pct(samples: &[i16]) -> u8 {
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_audio_threads(
+    call_id: u32,
     muted: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
@@ -2133,8 +2135,16 @@ fn spawn_audio_threads(
     #[cfg(all(feature = "call", target_os = "linux"))]
     {
         use crate::services::call_media::{
+            wav_dump::{self, WavDumpMsg},
             Apm, AudioLeveler, LevelerConfig, PopOutcome, PulseCapture, PulsePlayback, CHANNELS,
             SAMPLE_RATE_HZ,
+        };
+
+        let dump_dir = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
+        let (cap_wav_tx, pb_wav_tx, wav_handle) = match wav_dump::start_from_env(call_id, &dump_dir)
+        {
+            Some((c, p, h)) => (Some(c), Some(p), Some(h)),
+            None => (None, None, None),
         };
 
         let apm: Option<Arc<StdMutex<Apm>>> =
@@ -2237,6 +2247,7 @@ fn spawn_audio_threads(
                 if read_ok && !cap_held.load(Ordering::Relaxed) {
                     cap_ok += 1;
                     cap_max_ms = cap_max_ms.max(t0.elapsed().as_millis());
+                    let raw_buf = cap_buf;
                     if !muted.load(Ordering::Relaxed) {
                         if let Some(ref a) = cap_apm {
                             a.lock()
@@ -2255,11 +2266,23 @@ fn spawn_audio_threads(
                         for &s in &cap_buf {
                             cap_peak = cap_peak.max((s as i32).abs());
                         }
+                        if let Some(ref tx) = cap_wav_tx {
+                            let _ = tx.try_send(WavDumpMsg::Capture {
+                                raw: raw_buf,
+                                proc: cap_buf,
+                            });
+                        }
                         if tx_up.try_send(cap_buf).is_err() {
                             tx_up_drop += 1;
                         }
                     } else {
                         live_mic_level.store(0, Ordering::Relaxed);
+                        if let Some(ref tx) = cap_wav_tx {
+                            let _ = tx.try_send(WavDumpMsg::Capture {
+                                raw: raw_buf,
+                                proc: silence,
+                            });
+                        }
                         if tx_up.try_send(silence).is_err() {
                             tx_up_drop += 1;
                         }
@@ -2408,6 +2431,9 @@ fn spawn_audio_threads(
                     }
                 };
 
+                if let Some(ref tx) = pb_wav_tx {
+                    let _ = tx.try_send(WavDumpMsg::Render(frame));
+                }
                 if let Some(ref a) = apm {
                     a.lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -2461,11 +2487,16 @@ fn spawn_audio_threads(
             }
         });
 
-        vec![cap_handle, pb_handle]
+        let mut handles = vec![cap_handle, pb_handle];
+        if let Some(h) = wav_handle {
+            handles.push(h);
+        }
+        handles
     }
     #[cfg(not(all(feature = "call", target_os = "linux")))]
     {
         let _ = (
+            call_id,
             muted,
             held,
             stop,
