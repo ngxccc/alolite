@@ -421,6 +421,58 @@ impl CallSignalWireData {
             None
         }
     }
+
+    /// Extract peer P2P candidate [`std::net::SocketAddr`]s from `extendData` (`extraInfo` / `serverAddr`) if present.
+    pub fn p2p_candidates(&self) -> Vec<std::net::SocketAddr> {
+        let mut out = Vec::new();
+        let ext = self.parsed_extend_data();
+        for source in [ext.extra_info.as_ref(), ext.server_addr.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            collect_p2p_addrs_from_value(source, &mut out);
+        }
+        out
+    }
+}
+
+fn collect_p2p_addrs_from_value(val: &Value, out: &mut Vec<std::net::SocketAddr>) {
+    match val {
+        Value::String(s) => {
+            for part in s.split(',') {
+                if let Some(addr) = crate::protocol::call::p2p::parse_p2p_addr(part) {
+                    if !out.contains(&addr) {
+                        out.push(addr);
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                collect_p2p_addrs_from_value(item, out);
+            }
+        }
+        Value::Object(map) => {
+            if let (Some(ip), Some(port)) = (
+                map.get("ip").and_then(Value::as_str),
+                map.get("port").and_then(|p| wire::val_u64(Some(p))),
+            ) {
+                if let Ok(port_u16) = u16::try_from(port) {
+                    if let Ok(addr) = format!("{ip}:{port_u16}").parse::<std::net::SocketAddr>() {
+                        if !out.contains(&addr) {
+                            out.push(addr);
+                        }
+                    }
+                }
+            }
+            for key in ["p2pAddr", "p2pCandidates", "candidates"] {
+                if let Some(v) = map.get(key) {
+                    collect_p2p_addrs_from_value(v, out);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Build `11300` `/api/voicecall/requestcall` parameters.
@@ -887,5 +939,28 @@ mod tests {
 
         let key = SrtpKeyMaterial::from_bytes(vec![0xAA; 30]);
         assert!(!format!("{key:?}").contains("AA"));
+    }
+
+    #[test]
+    fn p2p_candidates_extracts_ip_pipe_port_and_object_candidates() {
+        let raw = serde_json::json!({
+            "cmd": 401,
+            "callId": 123,
+            "extendData": {
+                "srtpMode": 1,
+                "extraInfo": {
+                    "p2pAddr": "198.51.100.1|50000,198.51.100.2:50001",
+                    "p2pCandidates": [
+                        { "ip": "198.51.100.3", "port": 50002 }
+                    ]
+                }
+            }
+        });
+        let parsed = CallSignalWireData::from_value(&raw);
+        let cands = parsed.p2p_candidates();
+        assert_eq!(cands.len(), 3);
+        assert_eq!(cands[0], "198.51.100.1:50000".parse().unwrap());
+        assert_eq!(cands[1], "198.51.100.2:50001".parse().unwrap());
+        assert_eq!(cands[2], "198.51.100.3:50002".parse().unwrap());
     }
 }
