@@ -52,6 +52,7 @@ async fn compose_import_mobile_backup(
         .map(|l| l.display_name.clone())
         .unwrap_or_else(|| "Tôi".into());
     let db_path = db_path_for_account(&uin);
+    let db_path_names = db_path.clone();
     let my_uid = uin.clone();
     let (total_imported, mut hydrated_threads) = tokio::task::spawn_blocking(move || {
         commit_mobile_backup_to_store(
@@ -66,12 +67,20 @@ async fn compose_import_mobile_backup(
     })
     .await??;
     resolve_thread_names(s, &mut hydrated_threads).await;
-    let db_path_names = db_path_for_account(&uin);
     let resolved_snapshot = hydrated_threads;
-    let _ = tokio::task::spawn_blocking(move || {
+    match tokio::task::spawn_blocking(move || {
         persist_resolved_thread_names(&db_path_names, &resolved_snapshot)
     })
-    .await;
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            crate::logger::log_error("sync::persist_resolved_thread_names", &e.to_string());
+        }
+        Err(e) => {
+            crate::logger::log_error("sync::persist_resolved_thread_names_join", &e.to_string());
+        }
+    }
     let _ = clean_sync(s, &downloaded.pub_key_b64).await;
     clear_sync_keys();
     Ok(total_imported)
@@ -254,7 +263,7 @@ impl CoreEngine {
                 let imei_matches = imei.as_deref().is_none_or(|v| v == s_snap.imei);
                 if imei_matches {
                     set_latest_mobile_temp_key(&temp_key);
-                } else {
+                } else if crate::logger::is_dev_mode() {
                     eprintln!("[sync] ignored transfer_after_login for different device imei");
                 }
             }

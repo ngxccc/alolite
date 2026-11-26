@@ -17,7 +17,8 @@ pub use models::*;
 pub use sync_ingest::{
     commit_conv_archives_to_store, commit_mobile_backup_to_store, commit_phone_sync_to_store,
     commit_sync_v2_messages_to_store, extract_conv_archives_from_entries, oldest_message_id,
-    persist_resolved_thread_names, persist_thread_snapshot, ConvArchive, RawArchiveRow,
+    persist_resolved_thread_names, persist_resolved_thread_names_in_store, persist_thread_snapshot,
+    ConvArchive, RawArchiveRow,
 };
 pub use thread_cache::{load_threads_cache, save_threads_cache};
 pub use threads::{
@@ -71,6 +72,7 @@ impl MessageStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::Thread;
 
     #[test]
     fn local_time_when_hydrating_seconds_and_milliseconds() {
@@ -419,5 +421,184 @@ mod tests {
         let json_enc = serde_json::Value::String(enc).to_string();
         let dec = decode_zalo_cipher_payload(&json_enc, key);
         assert_eq!(dec, plain);
+    }
+
+    #[test]
+    fn upsert_thread_preserves_real_name_when_incoming_is_generic() {
+        let mut store = MessageStore::open(":memory:").unwrap();
+        store
+            .upsert_thread(&StoredThread {
+                thread_id: "123456".into(),
+                name: "Team AloLite".into(),
+                is_group: true,
+                last_ts: 1000,
+            })
+            .unwrap();
+
+        // Generic placeholder must not overwrite a real name already stored.
+        store
+            .upsert_thread(&StoredThread {
+                thread_id: "123456".into(),
+                name: "Nhóm 123456".into(),
+                is_group: true,
+                last_ts: 2000,
+            })
+            .unwrap();
+
+        let threads = store.all_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].name, "Team AloLite");
+        assert_eq!(threads[0].last_ts, 2000);
+
+        // A new real name should still update the stored name.
+        store
+            .upsert_thread(&StoredThread {
+                thread_id: "123456".into(),
+                name: "Team AloLite V2".into(),
+                is_group: true,
+                last_ts: 3000,
+            })
+            .unwrap();
+
+        let threads = store.all_threads().unwrap();
+        assert_eq!(threads[0].name, "Team AloLite V2");
+    }
+
+    #[test]
+    fn commit_conv_archives_preserves_sqlite_name_when_cache_is_empty() {
+        let mut store = MessageStore::open(":memory:").unwrap();
+        store
+            .upsert_thread(&StoredThread {
+                thread_id: "998877".into(),
+                name: "Dev Core".into(),
+                is_group: true,
+                last_ts: 100,
+            })
+            .unwrap();
+
+        let mut cached_threads: Vec<Thread> = Vec::new();
+        let archives = vec![ConvArchive {
+            stem_fid: None,
+            stem_gid: Some(1),
+            rows: vec![RawArchiveRow {
+                sender_id_num: 10,
+                cli_msg_id: 500,
+                glb_msg_id: 9001,
+                msg_type_num: 1,
+                ts: 2000,
+                content_opt: Some("xin chao".into()),
+                bin_net_opt: None,
+            }],
+        }];
+        let mut fid_map = std::collections::HashMap::new();
+        fid_map.insert(10, "2000001".into());
+        let mut gid_map = std::collections::HashMap::new();
+        gid_map.insert(1, "998877".into());
+
+        let imported = commit_conv_archives_to_store(
+            &mut store,
+            &mut cached_threads,
+            archives,
+            &fid_map,
+            &gid_map,
+            "1000001",
+            "Me",
+            None,
+        )
+        .unwrap();
+        assert_eq!(imported, 1);
+
+        let stored = store.all_threads().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].name, "Dev Core");
+        assert_eq!(cached_threads.len(), 1);
+        assert_eq!(cached_threads[0].name, "Dev Core");
+    }
+
+    #[test]
+    fn commit_conv_archives_resolves_prefixed_group_name_when_cache_uses_g_prefix() {
+        let mut store = MessageStore::open(":memory:").unwrap();
+        store
+            .upsert_thread(&StoredThread {
+                thread_id: "554433".into(),
+                name: "Product Sync".into(),
+                is_group: true,
+                last_ts: 100,
+            })
+            .unwrap();
+
+        let mut cached_threads = vec![Thread {
+            id: "g554433".into(),
+            name: "Nhóm g554433".into(),
+            is_group: true,
+            ..Default::default()
+        }];
+        let archives = vec![ConvArchive {
+            stem_fid: None,
+            stem_gid: Some(2),
+            rows: vec![RawArchiveRow {
+                sender_id_num: 10,
+                cli_msg_id: 501,
+                glb_msg_id: 9002,
+                msg_type_num: 1,
+                ts: 2500,
+                content_opt: Some("hello".into()),
+                bin_net_opt: None,
+            }],
+        }];
+        let fid_map = std::collections::HashMap::new();
+        let mut gid_map = std::collections::HashMap::new();
+        gid_map.insert(2, "554433".into());
+
+        commit_conv_archives_to_store(
+            &mut store,
+            &mut cached_threads,
+            archives,
+            &fid_map,
+            &gid_map,
+            "1000001",
+            "Me",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(cached_threads.len(), 1);
+        assert_eq!(cached_threads[0].name, "Product Sync");
+    }
+
+    #[test]
+    fn persist_resolved_thread_names_updates_sqlite_when_restarted() {
+        let mut store = MessageStore::open(":memory:").unwrap();
+        store
+            .upsert_thread(&StoredThread {
+                thread_id: "776655".into(),
+                name: "Nhóm 776655".into(),
+                is_group: true,
+                last_ts: 1000,
+            })
+            .unwrap();
+
+        let resolved = vec![
+            Thread {
+                id: "776655".into(),
+                name: "Nhóm Dự Án".into(),
+                is_group: true,
+                ..Default::default()
+            },
+            Thread {
+                id: "889900".into(),
+                name: "Nhóm 889900".into(),
+                is_group: true,
+                ..Default::default()
+            },
+        ];
+        persist_resolved_thread_names_in_store(&mut store, &resolved).unwrap();
+
+        // Simulate restart: hydrate into an empty thread list from SQLite.
+        let mut fresh: Vec<Thread> = Vec::new();
+        store.hydrate_threads(&mut fresh, 10).unwrap();
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "776655");
+        assert_eq!(fresh[0].name, "Nhóm Dự Án");
     }
 }

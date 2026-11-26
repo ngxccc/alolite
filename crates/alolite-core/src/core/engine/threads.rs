@@ -30,9 +30,9 @@ use crate::protocol::sync::{
 };
 use crate::storage::{
     commit_phone_sync_to_store, db_path_for_account, load_history_into_threads, load_threads_cache,
-    oldest_message_id, persist_account_threads, persist_thread_snapshot,
-    persist_threads as storage_persist_threads, preload_account_history, save_threads_cache,
-    MessageStore,
+    oldest_message_id, persist_account_threads, persist_resolved_thread_names,
+    persist_thread_snapshot, persist_threads as storage_persist_threads, preload_account_history,
+    save_threads_cache, MessageStore,
 };
 
 async fn compose_sync_thread(s: &Session, t: &mut Thread) -> Result<usize> {
@@ -220,8 +220,24 @@ impl CoreEngine {
             self.emit(CoreEvent::MuteSnapshotSynced(mute_snap.mutes));
         }
         resolve_thread_names(&s, &mut list).await;
+        let db_path_names = self.resolve_db_path_for_uin(uin);
         let cache_copy = list.clone();
-        let _ = tokio::task::spawn_blocking(move || save_threads_cache(&cache_copy)).await;
+        match tokio::task::spawn_blocking(move || {
+            persist_resolved_thread_names(&db_path_names, &cache_copy)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                crate::logger::log_error("core::refresh_persist_resolved_names", &e.to_string());
+            }
+            Err(e) => {
+                crate::logger::log_error(
+                    "core::refresh_persist_resolved_names_join",
+                    &e.to_string(),
+                );
+            }
+        }
 
         let total_msgs: usize = list.iter().map(|t| t.messages.len()).sum();
         let n_threads = list.len();
