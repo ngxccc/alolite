@@ -235,13 +235,7 @@ impl CoreEngine {
 
         if ev.is_voip_ish() {
             for item in crate::protocol::wire::iter_control_items(data_node) {
-                let parsed_data = crate::protocol::wire::parse_control_data(item.get("data"));
-                let candidate = if parsed_data.is_object() {
-                    &parsed_data
-                } else {
-                    item
-                };
-                let signal = crate::protocol::call::CallSignalWireData::from_value(candidate);
+                let signal = crate::protocol::call::CallSignalWireData::from_value(item);
                 if signal.signal_code().is_some() {
                     self.handle_voip_signal(s_snap, signal).await;
                 }

@@ -644,3 +644,27 @@ pub async fn set_call_devices(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn set_call_volume(
+    state: State<'_, AppCoreState>,
+    mic_pct: u8,
+    speaker_pct: u8,
+) -> Result<(), String> {
+    state.engine.set_call_volume(mic_pct, speaker_pct);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_call_audio_config(
+    state: State<'_, AppCoreState>,
+    auto_mic: bool,
+    auto_speaker: bool,
+    mic_pct: u8,
+    speaker_pct: u8,
+) -> Result<(), String> {
+    state
+        .engine
+        .set_call_audio_config(auto_mic, auto_speaker, mic_pct, speaker_pct);
+    Ok(())
+}

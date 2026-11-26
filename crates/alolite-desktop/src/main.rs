@@ -15,7 +15,10 @@ use tokio::sync::Mutex;
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    data_dir::initialize(&args)?;
+    let data_path = data_dir::initialize(&args)?;
+    let call_log_path = data_path.join("call-debug.log");
+    logger::enable_call_log(&call_log_path);
+    eprintln!("[alolite] call debug log: {}", call_log_path.display());
 
     let dev_mode = args
         .iter()
@@ -134,6 +137,8 @@ async fn main() -> anyhow::Result<()> {
             commands::set_call_held,
             commands::list_audio_devices,
             commands::set_call_devices,
+            commands::set_call_volume,
+            commands::set_call_audio_config,
         ])
         .run(tauri::generate_context!())
         .map_err(|e| anyhow::anyhow!("Không thể khởi chạy AloLite Tauri: {e}"))?;
